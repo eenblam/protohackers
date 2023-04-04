@@ -2,6 +2,7 @@
 
 NAME=protohackers-0
 TARGET=smoketest
+KEY=~/.ssh/id_rsa_do
 
 # We don't want to catch Ctrl+C prior
 handle_interrupt() {
@@ -56,15 +57,14 @@ fi
 sleep 2
 
 
-go build main.go
+go build -o "$TARGET" main.go
 
 echo "Copying binary"
 # accept-new since we're just gonna TOFU the server's key
-scp -i ~/.ssh/id_rsa_do \
+scp -i "$KEY" \
 	-o StrictHostKeyChecking=accept-new \
 	"./${TARGET}" "root@${IP}:/root/"
 
 
-
 echo "Running binary. Ctrl+C to exit."
-ssh -i ~/.ssh/id_rsa_do "root@${IP}" "/root/${TARGET}"
+ssh -i "$KEY" "root@${IP}" "/root/${TARGET}"
