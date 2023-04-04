@@ -10,7 +10,10 @@ Requirements:
 * Support at least 5 simultaneous connections
 
 ## Run
-TODO
 
-## Test
-TODO
+```
+go run .
+```
+
+## Testing locally
+In two terminals, you can run `go run .` to run the server, then `go run test.go` to run the tests.
