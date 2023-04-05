@@ -1,7 +1,6 @@
 package main
 
 import (
-	//"fmt"
 	"io"
 	"log"
 	"net"
@@ -11,9 +10,10 @@ import (
 // https://pkg.go.dev/net#example-Listener
 
 func main() {
-	//l, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	l, err := net.Listen("tcp", ":9999")
-	dieIf(err)
+	if err != nil {
+		log.Fatalf("Received error %s\n", err)
+	}
 	defer l.Close()
 
 	for {
@@ -37,11 +37,5 @@ func handle(conn net.Conn) {
 		log.Printf("ERROR %s %s\n", a, err)
 	} else {
 		log.Printf("CLOSE %s Wrote %d bytes\n", a, written)
-	}
-}
-
-func dieIf(err error) {
-	if err != nil {
-		log.Fatalf("Received error %s\n", err)
 	}
 }
