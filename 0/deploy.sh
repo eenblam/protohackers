@@ -4,15 +4,8 @@ NAME=protohackers-0
 TARGET=smoketest
 KEY=~/.ssh/id_rsa_do
 
-# We don't want to catch Ctrl+C prior
-handle_interrupt() {
-	echo "Tearing down droplet ${NAME} with ID ${DROPLET}"
-	doctl compute droplet delete -f $DROPLET
-}
-trap handle_interrupt SIGINT
-
-# Just existing droplet if it wasn't cleaned up somehow,
-# presumably by exiting too early
+# Just use existing droplet if it wasn't cleaned up somehow
+# (presumably by exiting too early)
 DROPLET=$(doctl compute droplet get $NAME --format=ID --no-header 2>/dev/null)
 if [ -z "$DROPLET" ]; then
 	if ! DROPLET=$(doctl compute droplet create \
@@ -31,8 +24,8 @@ else
 	echo "Found droplet ${NAME} with ID ${DROPLET}"
 fi
 
-# If we quit after this, delete the droplet
-# We don't want to catch Ctrl+C prior
+# If we quit after this, delete the droplet.
+# Registering here, since we don't want to catch Ctrl+C prior.
 handle_interrupt() {
 	echo "Tearing down droplet ${NAME} with ID ${DROPLET}"
 	doctl compute droplet delete -f $DROPLET
