@@ -75,6 +75,7 @@ func handle(conn net.Conn, s *Sieve) {
 		}
 		prime, err := s.IsPrime(request.Number)
 		if err != nil {
+			// This probably happened because we haven't computed this high
 			fail(conn, err.Error(), string(readbuf))
 			break
 		}
@@ -88,9 +89,12 @@ func handle(conn net.Conn, s *Sieve) {
 	}
 }
 
+// fail lets an offending client know its input was malformed.
 func fail(conn net.Conn, errMessage string, buffer string) error {
 	a := conn.RemoteAddr().String()
 	log.Printf("ERROR %s %s: %s", a, errMessage, buffer)
-	conn.Write([]byte(malformed + "\n"))
-	return nil
+	_, err := conn.Write([]byte(malformed + "\n"))
+	// We return this error (or nil)... but doesn't matter really.
+	// If we called fail(), then the Conn should be closed anyway.
+	return err
 }

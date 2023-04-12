@@ -6,6 +6,10 @@ import (
 )
 
 /**
+* It's just the Sieve of Eratosthenes. Nothing clever.
+* Mutex not actually needed for current usage;
+* just didn't want to leave a footgun lying around.
+*
 * IDEA:
 * Keep a fixed size array for running computations
 * Sieve that space, then add everything remaining to a map when done
@@ -20,11 +24,15 @@ import (
  */
 
 type Sieve struct {
-	mu        sync.Mutex
+	// Don't allow IsPrime() to be called during Solve()
+	mu sync.Mutex
+	// primeList is a list of size (max+1) to allow a 1:1 relationship between
+	// indices and integers. i.e. primeList[7] is true, primeList[8] is false.
 	primeList []bool
 	max       int
 }
 
+// IsPrime checks if n is pre-computed in s.primeList, but errors if n > s.max.
 func (s *Sieve) IsPrime(n int) (bool, error) {
 	if n < 2 {
 		return false, nil
@@ -38,6 +46,7 @@ func (s *Sieve) IsPrime(n int) (bool, error) {
 	return s.primeList[n], nil
 }
 
+// Solve will pre-compute primes up to s.max using the Sieve of Eratosthenes.
 func (s *Sieve) Solve() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -53,6 +62,7 @@ func (s *Sieve) Solve() {
 	}
 }
 
+// NewSieve creates a Sieve and pre-computes the primes up to and including solveTo.
 func NewSieve(solveTo int) (*Sieve, error) {
 	if solveTo < 2 {
 		return nil, fmt.Errorf("Expected solveTo >= 2, got %s", solveTo)
