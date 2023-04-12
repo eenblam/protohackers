@@ -33,29 +33,29 @@ func UnwrapRequest(readbuf []byte) (*Request, error) {
 	// 2. On error, try the same with a float
 	// 3. In either case, error if either field is missing (nil-valued pointer)
 	// 4. If success, return a non-raw Request
+
+	// Happy path: try parsing as a Request with an int for Number
 	var rawRequest RawRequestInt
-	// Try parsing as a Request
 	err := json.Unmarshal(readbuf, &rawRequest)
-	if err != nil {
-		// Are we only failing because it's a float?
-		var rawRequestFloat RawRequestFloat
-		err2 := json.Unmarshal(readbuf, &rawRequestFloat)
-		if err2 != nil {
-			// Nope! Return the original parse error
-			return nil, err
-		}
-		if rawRequestFloat.Number == nil || rawRequestFloat.Method == nil {
+	if err == nil {
+		// Ensure no missing fields, e.g. `{"method":"isPrime"}`
+		if rawRequest.Number == nil || rawRequest.Method == nil {
 			return nil, errors.New("Required field missing")
 		}
-		// Doesn't matter what Number is, since we treat floats as non-prime
-		return &Request{*rawRequestFloat.Method, 0, true}, nil
+		return &Request{*rawRequest.Method, *rawRequest.Number, false}, nil
 	}
-	// Are we unmarshaling with no number field? e.g. `{"method":"isPrime"}
-	if rawRequest.Number == nil || rawRequest.Method == nil {
+	// Bad parse, but maybe a float for Number
+	var rawRequestFloat RawRequestFloat
+	err2 := json.Unmarshal(readbuf, &rawRequestFloat)
+	if err2 != nil {
+		// Nope! Return the original parse error
+		return nil, err
+	}
+	if rawRequestFloat.Number == nil || rawRequestFloat.Method == nil {
 		return nil, errors.New("Required field missing")
 	}
-
-	return &Request{*rawRequest.Method, *rawRequest.Number, false}, nil
+	// Float! Doesn't matter what Number is, since we treat floats as non-prime.
+	return &Request{*rawRequestFloat.Method, 0, true}, nil
 }
 
 func isValid(request Request) bool {
