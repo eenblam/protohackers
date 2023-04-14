@@ -75,11 +75,11 @@ func (n *Node) SearchRange(lo int32, hi int32) []int32 {
 		this := q[0]
 		// Pop
 		q = q[1:]
-		if this.Key <= hi && this.Left != nil {
-			q = append(q, this.Left)
-		}
-		if this.Key >= lo && this.Right != nil {
+		if this.Key < hi && this.Right != nil {
 			q = append(q, this.Right)
+		}
+		if this.Key > lo && this.Left != nil {
+			q = append(q, this.Left)
 		}
 		if lo <= this.Key && this.Key <= hi {
 			fmt.Printf("Appending %d\n", this.Value)
