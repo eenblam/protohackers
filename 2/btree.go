@@ -48,6 +48,14 @@ func (n *Node) MeanRange(lo int32, hi int32) int32 {
 		return 0
 	}
 
+	// If we just stick with int32 here, we'll have a problem:
+	// the int32s can overflow for a large sum.
+	// We could divide as we go, but then we introduce multiple roundings,
+	// leading to a growing division error.
+	// Instead, we convert to int64 for the computation, then return int32.
+	// We shouldn't have to worry about our final int64 overflowing the int32,
+	// since the mean of only int32s should also be an int32.
+	// (For reference, int32's range is  [-2147483648, 2147483647])
 	sum := int64(0)
 	for _, v := range nums {
 		sum = sum + int64(v)
