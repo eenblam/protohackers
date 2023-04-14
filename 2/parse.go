@@ -44,8 +44,8 @@ func ParseMessage(bs []byte) (*RawMessage, error) {
 
 type RawMessage struct {
 	Type MessageType
-	A    uint32
-	B    uint32
+	A    int32
+	B    int32
 }
 
 func (m *RawMessage) Parse(bs []byte) error {
@@ -59,8 +59,9 @@ func (m *RawMessage) Parse(bs []byte) error {
 	}
 	// Update internals
 	m.Type = mtype
-	m.A = binary.BigEndian.Uint32(bs[1:5])
-	m.B = binary.BigEndian.Uint32(bs[5:9])
+	// There isn't an equivalent BigEndian.Int32 :shrug:
+	m.A = int32(binary.BigEndian.Uint32(bs[1:5]))
+	m.B = int32(binary.BigEndian.Uint32(bs[5:9]))
 	return nil
 }
 

@@ -7,14 +7,14 @@ import (
 )
 
 type Node struct {
-	Key    uint32
-	Value  uint32
+	Key    int32
+	Value  int32
 	Left   *Node
 	Right  *Node
 	Parent *Node
 }
 
-func NewNode(key uint32, value uint32) *Node {
+func NewNode(key int32, value int32) *Node {
 	x := &Node{
 		Key:    key,
 		Value:  value,
@@ -25,7 +25,7 @@ func NewNode(key uint32, value uint32) *Node {
 	return x
 }
 
-func (n *Node) InsertKeyValue(key uint32, value uint32) {
+func (n *Node) InsertKeyValue(key int32, value int32) {
 	x := NewNode(key, value)
 	n.Insert(x)
 }
@@ -37,7 +37,7 @@ func (n *Node) InsertKeyValue(key uint32, value uint32) {
 // 9 <= x: take x, check left
 // 9 < x: check left
 
-func (n *Node) MeanRange(lo uint32, hi uint32) uint32 {
+func (n *Node) MeanRange(lo int32, hi int32) int32 {
 	if hi < lo {
 		// "If there are no samples within the requested period,
 		// or if mintime comes after maxtime, the value returned must be 0."
@@ -55,15 +55,15 @@ func (n *Node) MeanRange(lo uint32, hi uint32) uint32 {
 		return 0
 	}
 
-	sum := uint32(0)
+	sum := int32(0)
 	for _, v := range nums {
 		sum = sum + v
 	}
-	return sum / uint32(length)
+	return sum / int32(length)
 }
 
-func (n *Node) SearchRange(lo uint32, hi uint32) []uint32 {
-	out := []uint32{}
+func (n *Node) SearchRange(lo int32, hi int32) []int32 {
+	out := []int32{}
 	if hi < lo {
 		// "If there are no samples within the requested period,
 		// or if mintime comes after maxtime, the value returned must be 0."

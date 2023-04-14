@@ -13,7 +13,7 @@ const nine = 9
 
 // demo is an early sanity check for SearchRange prior to writing main()
 func demo() {
-	vals := map[uint32]uint32{
+	vals := map[int32]int32{
 		4: 99,
 		5: 200,
 		6: 80,
@@ -66,9 +66,10 @@ func handle(conn net.Conn) {
 		switch {
 		case err == io.EOF || err == io.ErrUnexpectedEOF:
 			log.Println("EOF")
-			break
+			return
 		case err != nil:
 			log.Printf("Unexpected error: %s", err)
+			return
 		}
 		if v != nine {
 			//TODO do we try to buffer this and wait for more?
@@ -105,7 +106,7 @@ func handle(conn net.Conn) {
 	}
 }
 
-func reply(conn net.Conn, mean uint32) error {
+func reply(conn net.Conn, mean int32) error {
 	log.Printf("REPLY %d", mean)
 	return binary.Write(conn, binary.BigEndian, mean)
 }
