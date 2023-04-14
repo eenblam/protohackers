@@ -1,0 +1,48 @@
+package main
+
+import (
+	"encoding/binary"
+	"log"
+	"net"
+)
+
+func main() {
+	tests := [][]byte{
+		// "I 12345 101",
+		[]byte{0x49, 0x00, 0x00, 0x30, 0x39, 0x00, 0x00, 0x00, 0x65},
+		// "I 12346 102",
+		[]byte{0x49, 0x00, 0x00, 0x30, 0x3a, 0x00, 0x00, 0x00, 0x66},
+		// "I 12347 100",
+		[]byte{0x49, 0x00, 0x00, 0x30, 0x3b, 0x00, 0x00, 0x00, 0x64},
+		// "I 40960 5",
+		[]byte{0x49, 0x00, 0x00, 0xa0, 0x00, 0x00, 0x00, 0x00, 0x05},
+	}
+
+	addr := net.TCPAddr{
+		net.ParseIP("127.0.0.1"),
+		3332,
+		""}
+	conn, err := net.DialTCP("tcp", nil, &addr)
+	if err != nil {
+		log.Printf("Couldn't dial TCP: %s\n", err)
+		return
+	}
+	defer conn.Close()
+
+	for _, t := range tests {
+		// Send insert tests
+		err := binary.Write(conn, binary.BigEndian, t)
+		if err != nil {
+			log.Printf("Unexpected error, skipping: %s", err)
+		}
+	}
+
+	// "Q 12344 12348",
+	msg := []byte{0x51, 0x00, 0x00, 0x30, 0x38, 0x00, 0x00, 0x30, 0x3C}
+	err = binary.Write(conn, binary.BigEndian, msg)
+	if err != nil {
+		log.Printf("Unexpected error, skipping: %s", err)
+	}
+	// Currently just reading the response logged on the other side
+	//TODO read and check response
+}
