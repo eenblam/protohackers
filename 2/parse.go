@@ -32,6 +32,16 @@ func (m MessageType) Text() string {
 	}
 }
 
+func ParseMessage(bs []byte) (*RawMessage, error) {
+	//var r *RawMessage
+	r := &RawMessage{}
+	err := r.Parse(bs)
+	if err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
 type RawMessage struct {
 	Type MessageType
 	A    uint32
