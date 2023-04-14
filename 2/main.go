@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -58,26 +57,29 @@ func main() {
 
 func handle(conn net.Conn) {
 	defer conn.Close()
-	reader := bufio.NewReader(conn)
 	buf := make([]byte, nine)
 	var tree *Node
 	for {
-		v, err := reader.Read(buf)
-		switch {
-		case err == io.EOF || err == io.ErrUnexpectedEOF:
-			log.Println("EOF")
-			return
-		case err != nil:
-			log.Printf("Unexpected error: %s", err)
-			return
+		var b [1]byte
+		for i := 0; i < 9; i++ {
+			// Read 9 bytes at a time
+			// TODO there's gotta be a smoother way to do this...
+			bytesRead, err := conn.Read(b[:])
+			switch {
+			case err == io.EOF || err == io.ErrUnexpectedEOF:
+				log.Println("EOF")
+				return
+			case err != nil:
+				log.Printf("Unexpected error: %s", err)
+				return
+			}
+			if bytesRead == 0 {
+				//TODO look into what this might indicate
+				continue
+			}
+			buf[i] = b[0]
 		}
-		if v != nine {
-			//TODO do we try to buffer this and wait for more?
-			// For now let's just focus on the case where we have 9 bytes
-			log.Printf("Expected 9 bytes, got %d", v)
-			break
-		}
-		log.Printf("Got %d bytes", v)
+
 		// parse
 		msg, err := ParseMessage(buf)
 		if err != nil {
