@@ -75,6 +75,8 @@ func handle(conn net.Conn) {
 			}
 			if bytesRead == 0 {
 				//TODO look into what this might indicate
+				// No byte read, so don't bump index
+				i--
 				continue
 			}
 			buf[i] = b[0]
