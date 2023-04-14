@@ -30,13 +30,6 @@ func (n *Node) InsertKeyValue(key int32, value int32) {
 	n.Insert(x)
 }
 
-// range: 5,9
-// x < 5: Check right
-// x <= 5: Take x, check right
-// 5 <= x <= 9: take x, check left and right
-// 9 <= x: take x, check left
-// 9 < x: check left
-
 func (n *Node) MeanRange(lo int32, hi int32) int32 {
 	if hi < lo {
 		// "If there are no samples within the requested period,
@@ -55,11 +48,11 @@ func (n *Node) MeanRange(lo int32, hi int32) int32 {
 		return 0
 	}
 
-	sum := int32(0)
+	sum := int64(0)
 	for _, v := range nums {
-		sum = sum + v
+		sum = sum + int64(v)
 	}
-	return sum / int32(length)
+	return int32(sum / int64(length))
 }
 
 func (n *Node) SearchRange(lo int32, hi int32) []int32 {
@@ -82,7 +75,6 @@ func (n *Node) SearchRange(lo int32, hi int32) []int32 {
 			q = append(q, this.Left)
 		}
 		if lo <= this.Key && this.Key <= hi {
-			fmt.Printf("Appending %d\n", this.Value)
 			out = append(out, this.Value)
 		}
 	}
