@@ -42,10 +42,10 @@ func UnwrapRequest(readbuf []byte) (*Request, error) {
 		if rawRequest.Number == nil {
 			return nil, errors.New("Required field missing")
 		}
-		if *rawRequest.Method != "isPrime" {
+		if rawRequest.Method != "isPrime" {
 			return nil, errors.New("Method missing or invalid")
 		}
-		return &Request{*rawRequest.Method, *rawRequest.Number, false}, nil
+		return &Request{rawRequest.Method, *rawRequest.Number, false}, nil
 	}
 	// Bad parse, but maybe a float for Number
 	var rawRequestFloat RawRequestFloat
@@ -57,9 +57,9 @@ func UnwrapRequest(readbuf []byte) (*Request, error) {
 	if rawRequestFloat.Number == nil {
 		return nil, errors.New("Required field missing")
 	}
-	if *rawRequestFloat.Method != "isPrime" {
+	if rawRequestFloat.Method != "isPrime" {
 		return nil, errors.New("Method missing or invalid")
 	}
 	// Float! Doesn't matter what Number is, since we treat floats as non-prime.
-	return &Request{*rawRequestFloat.Method, 0, true}, nil
+	return &Request{rawRequestFloat.Method, 0, true}, nil
 }
