@@ -12,12 +12,12 @@ type Request struct {
 }
 
 type RawRequestInt struct {
-	Method *string `json:"method"`
-	Number *int    `json:"number"`
+	Method string `json:"method"`
+	Number *int   `json:"number"`
 }
 
 type RawRequestFloat struct {
-	Method *string  `json:"method"`
+	Method string   `json:"method"`
 	Number *float64 `json:"number"`
 }
 
@@ -39,8 +39,11 @@ func UnwrapRequest(readbuf []byte) (*Request, error) {
 	err := json.Unmarshal(readbuf, &rawRequest)
 	if err == nil {
 		// Ensure no missing fields, e.g. `{"method":"isPrime"}`
-		if rawRequest.Number == nil || rawRequest.Method == nil {
+		if rawRequest.Number == nil {
 			return nil, errors.New("Required field missing")
+		}
+		if *rawRequest.Method != "isPrime" {
+			return nil, errors.New("Method missing or invalid")
 		}
 		return &Request{*rawRequest.Method, *rawRequest.Number, false}, nil
 	}
@@ -51,16 +54,12 @@ func UnwrapRequest(readbuf []byte) (*Request, error) {
 		// Nope! Return the original parse error
 		return nil, err
 	}
-	if rawRequestFloat.Number == nil || rawRequestFloat.Method == nil {
+	if rawRequestFloat.Number == nil {
 		return nil, errors.New("Required field missing")
+	}
+	if *rawRequestFloat.Method != "isPrime" {
+		return nil, errors.New("Method missing or invalid")
 	}
 	// Float! Doesn't matter what Number is, since we treat floats as non-prime.
 	return &Request{*rawRequestFloat.Method, 0, true}, nil
-}
-
-func isValid(request Request) bool {
-	if request.Method != "isPrime" {
-		return false
-	}
-	return true
 }

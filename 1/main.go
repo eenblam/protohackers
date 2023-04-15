@@ -38,17 +38,19 @@ func main() {
 func handle(conn net.Conn, s *Sieve) {
 	defer conn.Close()
 	reader := bufio.NewReader(conn)
-	connected := true
-	for connected {
+	for {
+		//TODO Use a scanner
+		// call scanner.scan('\n')
+		// bufio.NewReader and reader.ReadBytes are a bit lower level
+		// so just use scanner since that's what it's for
 		readbuf, err := reader.ReadBytes('\n')
 		switch {
 		case err == io.EOF || err == io.ErrUnexpectedEOF:
 			log.Println("")
-			connected = false
-			continue
+			return
 		case err != nil:
 			log.Printf("Unexpected error: %s", err)
-			continue
+			return
 		default:
 			// Do nothing
 		}
@@ -61,12 +63,6 @@ func handle(conn net.Conn, s *Sieve) {
 			break
 		}
 
-		// Malformed?
-		if !isValid(*request) {
-			fail(conn, "Invalid request", string(readbuf))
-			break
-		}
-		// Well-formed:
 		// Float?
 		if request.Float {
 			log.Println("Float is false")
