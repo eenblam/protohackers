@@ -65,7 +65,7 @@ func (s *Sieve) Solve() {
 // NewSieve creates a Sieve and pre-computes the primes up to and including solveTo.
 func NewSieve(solveTo int) (*Sieve, error) {
 	if solveTo < 2 {
-		return nil, fmt.Errorf("Expected solveTo >= 2, got %s", solveTo)
+		return nil, fmt.Errorf("Expected solveTo >= 2, got %d", solveTo)
 	}
 	// Allocate with size +1 so that the index refers exactly to the number in question
 	// Don't have to constantly add/subtract 1 this way
