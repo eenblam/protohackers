@@ -33,14 +33,15 @@ func TestMain(t *testing.T) {
 		"**************************** (((((((((((((((((((((((((((((((((((((",
 	}
 
-	for i, testCase := range tests {
+	for _, testCase := range tests {
 		// Weird scope footgun
-		i, testCase := i, testCase
+		// Don't want testCase to refer to the global
+		testCase := testCase
 		t.Run(testCase, func(t *testing.T) {
 			t.Parallel()
 			conn, err := net.DialTCP("tcp", nil, &addr)
 			if err != nil {
-				t.Fatalf("TEST %d: couldn't dial TCP: %s\n", i, err)
+				t.Fatalf("Couldn't dial TCP: %s\n", err)
 				return
 			}
 			defer conn.Close()
@@ -51,13 +52,13 @@ func TestMain(t *testing.T) {
 			for j := 0; j < times; j++ {
 				w, err := conn.Write([]byte(testCase))
 				if err != nil {
-					t.Fatalf("TEST %d: error writing to conn: %s\n", i, err)
+					t.Fatalf("Error writing to conn: %s\n", err)
 				}
 				written += w
 			}
 			err = conn.CloseWrite()
 			if err != nil {
-				t.Fatalf("TEST %d: failed to close write: %s\n", i, err)
+				t.Fatalf("Failed to close write: %s\n", err)
 			}
 
 			// Read and compare one byte at a time
@@ -68,23 +69,22 @@ func TestMain(t *testing.T) {
 				//TODO Test that conn is closed with brief timeout
 				if err != nil {
 					if err == io.EOF {
-						//log.Printf("TEST %d: received EOF from server", i)
 						conn.Close()
 						break
 					}
-					t.Fatalf("TEST %d: failed to read: %s\n", i, err)
+					t.Fatalf("Failed to read: %s\n", err)
 				}
 				read += r
 				got := buf[0]
 				exp_index := (read - 1) % len(testCase)
-				expected := testCase[exp_index]
-				if got != expected {
-					t.Fatalf("TEST %d: got %b expected %b at byte %d\n", i, got, expected, read)
+				want := testCase[exp_index]
+				if got != want {
+					t.Fatalf("Want %b got %b at byte %d\n", want, got, read)
 				}
 			}
 			// Test total is correct
 			if read != len(testCase)*times {
-				t.Fatalf("TEST %d: expected %d bytes, got %d\n", i, len(testCase)*times, read)
+				t.Fatalf("Want %d bytes, got %d\n", len(testCase)*times, read)
 			}
 		})
 	}
