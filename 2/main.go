@@ -57,60 +57,60 @@ func main() {
 
 func handle(conn net.Conn) {
 	defer conn.Close()
+	logger := log.New(log.Writer(), conn.RemoteAddr().String(), log.Flags()|log.Lshortfile)
 	buf := make([]byte, nine)
 	var tree *Node
 	for {
-		var b [1]byte
-		for i := 0; i < 9; i++ {
-			// Read 9 bytes at a time
-			// TODO there's gotta be a smoother way to do this...
-			bytesRead, err := conn.Read(b[:])
-			switch {
-			case err == io.EOF || err == io.ErrUnexpectedEOF:
-				log.Println("EOF")
-				return
-			case err != nil:
-				log.Printf("Unexpected error: %s", err)
-				return
-			}
-			if bytesRead == 0 {
-				//TODO look into what this might indicate
-				// No byte read, so don't bump index
-				i--
-				continue
-			}
-			buf[i] = b[0]
+		_, err := io.ReadFull(conn, buf)
+		switch {
+		case err == io.ErrUnexpectedEOF:
+			logger.Println("EOF")
+			return
+		case err != nil:
+			logger.Printf("Unexpected error: %s", err)
+			return
 		}
-
 		// parse
-		msg, err := ParseMessage(buf)
+		kind, a, b, err := Parse(buf)
 		if err != nil {
-			log.Printf("Couldn't parse message: %s", err)
-			break
+			logger.Printf("Couldn't parse message: %s", err)
+			return
 		}
-		log.Printf("RECEIVED %s", msg.Text())
-		switch msg.Type {
-		case insert:
+		logger.Printf("RECEIVED %c %d %d", kind, a, b)
+		switch kind {
+		case 'I':
 			if tree == nil {
-				tree = NewNode(msg.A, msg.B)
+				tree = NewNode(a, b)
 			} else {
-				tree.InsertKeyValue(msg.A, msg.B)
+				tree.InsertKeyValue(a, b)
 			}
-		case query:
+		case 'Q':
 			if tree == nil {
 				// Undefined - just return 0.
-				reply(conn, 0)
+				log.Printf("REPLY %d", 0)
+				binary.Write(conn, binary.BigEndian, 0)
 			} else {
-				log.Println("COMPUTING MEAN")
-				mean := tree.MeanRange(msg.A, msg.B)
-				reply(conn, mean)
+				logger.Println("COMPUTING MEAN")
+				mean := tree.MeanRange(a, b)
+				log.Printf("REPLY %d", mean)
+				binary.Write(conn, binary.BigEndian, mean)
 			}
 		default:
 		}
 	}
 }
 
-func reply(conn net.Conn, mean int32) error {
-	log.Printf("REPLY %d", mean)
-	return binary.Write(conn, binary.BigEndian, mean)
+func Parse(bs []byte) (kind byte, a, b int32, err error) {
+	if len(bs) != 9 {
+		return 0, 0, 0, fmt.Errorf("Expected 9 bytes, got %d", len(bs))
+	}
+	// Parse message type
+	switch bs[0] {
+	case 'I', 'Q':
+		a = int32(binary.BigEndian.Uint32(bs[1:5]))
+		b = int32(binary.BigEndian.Uint32(bs[5:9]))
+		return bs[0], a, b, nil
+	default:
+		return 0, 0, 0, fmt.Errorf("Want I or Q, got %x", bs[0])
+	}
 }
