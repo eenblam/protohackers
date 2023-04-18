@@ -152,7 +152,7 @@ func Validate(rawName []byte) (string, error) {
 }
 
 type Broker struct {
-	mx    sync.RWMutex
+	mx    sync.Mutex
 	Users map[string][]string
 }
 
