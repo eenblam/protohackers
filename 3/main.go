@@ -80,14 +80,8 @@ func handle(conn net.Conn, b *Broker) {
 	defer logger.Println("Logging off")
 	logger.Println("Joined")
 
-	// Listen for:
-	// * messages from user
-	// * messages to user
-	// * exit signal
-
-	// What about a separate goroutine?
-	// One reads from scanner until failure, then does a Send
-	// One waits to Receive from queue, then sends to user
+	// Kick off a second goroutine to read from scanner until failure, then b.Send
+	// One waits to b.Receive from queue, then write to user
 
 	//TODO Not sure if this should come from main() or start here
 	ctx, cancelCtx := context.WithCancel(context.TODO())
@@ -100,9 +94,7 @@ func handle(conn net.Conn, b *Broker) {
 				return
 			default:
 				// try to read and send
-				//logger.Println("Reader scanning")
 				gotSomething := scanner.Scan()
-				//TODO handle bool, check scanner.Err() and whatnot
 				if !gotSomething {
 					if err := scanner.Err(); err != nil {
 						logger.Printf("Unexpected error scanning: %s", err)
@@ -128,7 +120,6 @@ func handle(conn net.Conn, b *Broker) {
 			return
 		default:
 			// Receive from queue and send to client
-			//logger.Println("Writer popping")
 			msg, empty := b.Receive(name)
 			if !empty {
 				_, err := conn.Write([]byte(msg))
@@ -161,8 +152,7 @@ func Validate(rawName []byte) (string, error) {
 }
 
 type Broker struct {
-	mx sync.RWMutex
-	// channel to receive (name, message)
+	mx    sync.RWMutex
 	Users map[string][]string
 }
 
@@ -190,17 +180,7 @@ func (b *Broker) Register(name string) error {
 }
 
 // Returns msg,false on msg, else "",true on empty
-//
-// This is abusing the read unlock since we're technically
-// modifying the underlying data structure, but only one
-// goroutine (the user's) should ever call Receive(name)
-// to "read" for a given user.
-// The result is that users can pop from their queue
-// without waiting for other reads, but sends require an
-// exclusive lock. (like user registration and deletion)
 func (b *Broker) Receive(name string) (string, bool) {
-	//b.mx.RLock()
-	//defer b.mx.RUnlock()
 	b.mx.Lock()
 	defer b.mx.Unlock()
 	queue := b.Users[name]
