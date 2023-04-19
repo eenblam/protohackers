@@ -12,7 +12,7 @@ if [ -z "$DROPLET" ]; then
 		--region lon1 \
 		--image debian-11-x64 \
 		--size s-1vcpu-1gb \
-		--ssh-keys 71:0b:6e:82:97:18:ef:cb:fc:27:85:ca:ce:14:bc:c3 \
+		--ssh-keys c8:79:0b:65:47:36:b8:77:83:8e:97:cf:c5:3b:90:0b \
 		$NAME \
 		--format=ID \
 		--no-header); then
