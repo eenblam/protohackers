@@ -3,12 +3,19 @@
 https://protohackers.com/problem/4
 
 Pretty straightforward.
+I started writing parser tests in advance,
+then realized that my parse function had the
+exact same signature as `strings.Cut()`.
+This made life pretty nice.
+
+This passes, but I suspect the tests
+didn't put much concurrent load on the system.
 
 ## Run
 You can just do `go run .` to get the server running locally.
 
 ## Testing locally
-Run tests with `go test -v .`
+No tests right now.
 
 ## Deploying to Digital Ocean
 If you have [`doctl`](https://docs.digitalocean.com/reference/doctl/) set up locally,
