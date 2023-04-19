@@ -13,8 +13,7 @@ Requirements:
 You can just do `go run .` to get the server running locally.
 
 ## Testing locally
-In two terminals, you can run `go run .` to run the server, then `go run test.go` to run the tests.
-
+You can run the integration tests with `go test -v .`
 
 ## Deploying to Digital Ocean
 If you have [`doctl`](https://docs.digitalocean.com/reference/doctl/) set up locally,
