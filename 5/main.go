@@ -55,79 +55,78 @@ func main() {
 }
 
 func ServerToClient(ctx context.Context, cancelCtx context.CancelFunc, client net.Conn, server net.Conn) {
+	defer cancelCtx()
 	reader := bufio.NewReader(server)
+READLINE:
 	for {
 		readbuf, err := reader.ReadBytes('\n')
 		switch {
 		case err == io.EOF || err == io.ErrUnexpectedEOF:
 			log.Println("S2C: exiting due to EOF")
-			cancelCtx()
 			return
 		case err != nil:
 			// Not so unexpected here! C2S might close conn before S2C ends.
 			log.Printf("S2C: unexpected error: %s", err)
-			cancelCtx()
 			return
 		default:
-		}
-		got := strings.TrimSuffix(string(readbuf), "\n")
-		out := got
-		// If it's from server, it has a ] if-and-only-if it's a user-sent message. Split on the first.
-		before, message, isMessage := strings.Cut(got, "] ")
-		if isMessage {
-			// Don't rewrite all data, only the "message" part
-			out = before + "] " + Replace(message)
-		}
-		log.Printf("S2C:\n\tGot [%s]\n\tOut [%s]", got, out)
-		_, err = client.Write([]byte(out + "\n"))
-		if err != nil {
-			cancelCtx()
-			return
-		}
+			got := strings.TrimSuffix(string(readbuf), "\n")
+			out := got
+			// If it's from server, it has a ] if-and-only-if it's a user-sent message. Split on the first.
+			before, message, isMessage := strings.Cut(got, "] ")
+			if isMessage {
+				// Don't rewrite all data, only the "message" part
+				out = before + "] " + Replace(message)
+			}
+			log.Printf("S2C:\n\tGot [%s]\n\tOut [%s]", got, out)
+			_, err = fmt.Fprintln(client, out)
+			if err != nil {
+				return
+			}
 
-		select {
-		case <-ctx.Done():
-			log.Println("S2C: closed by context")
-			return
-		default:
+			select {
+			case <-ctx.Done():
+				log.Println("S2C: closed by context")
+				return
+			default:
+				continue READLINE
+			}
 		}
 	}
 }
 
 func ClientToServer(ctx context.Context, cancelCtx context.CancelFunc, client net.Conn, server net.Conn) {
 	// Close connections here, since client is most likely to terminate under test
+	defer cancelCtx()
 	defer client.Close()
 	defer server.Close()
 	defer log.Println("Connections closed")
 	reader := bufio.NewReader(client)
+READLINE:
 	for {
-		readbuf, err := reader.ReadBytes('\n')
-		switch {
-		case err == io.EOF || err == io.ErrUnexpectedEOF:
-			log.Println("C2S: exiting due to EOF")
-			cancelCtx()
-			return
-		case err != nil:
+		switch readbuf, err := reader.ReadBytes('\n'); err {
+		default: // err != nil
 			// Would be a surprise for C2S
 			log.Printf("C2S: unexpected error: %s", err)
-			cancelCtx()
 			return
-		default:
-		}
-		got := strings.TrimSuffix(string(readbuf), "\n")
-		out := Replace(got)
-		log.Printf("C2S:\n\tGot [%s]\n\tOut [%s]", got, out)
-		_, err = server.Write([]byte(out + "\n"))
-		if err != nil {
-			cancelCtx()
+		case io.EOF, io.ErrUnexpectedEOF:
+			log.Println("C2S: exiting due to EOF")
 			return
-		}
+		case nil:
+			got := strings.TrimSuffix(string(readbuf), "\n")
+			out := Replace(got)
+			log.Printf("C2S:\n\tGot [%s]\n\tOut [%s]", got, out)
+			_, err = fmt.Fprintln(server, out)
+			if err != nil {
+				return
+			}
 
-		select {
-		case <-ctx.Done():
-			log.Println("C2S: closed by context")
-			return
-		default:
+			select {
+			case <-ctx.Done():
+				log.Println("C2S: closed by context")
+				return
+			default:
+				continue READLINE
+			}
 		}
 	}
 }
