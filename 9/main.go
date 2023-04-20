@@ -5,11 +5,13 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 func toJSONLine[T any](t T) []byte {
@@ -30,6 +32,18 @@ type Job struct {
 	Queue    string
 }
 
+type Request struct {
+	Request string   `json:"request"` // "put", "get", "delete", "abort"
+	Queues  []string `json:"queues"`  // GET only
+	Wait    bool     `json:"wait"`    // GET only
+
+	Queue string          `json:"queue"` // PUT only
+	Job   json.RawMessage `json:"job"`   // PUT only
+	Pri   int             `json:"pri"`   // PUT only
+
+	ID int64 `json:"id"` // DELETE, ABORT only
+}
+
 var ids atomic.Int64
 
 func nextID() int64 { return ids.Add(1) }
@@ -41,9 +55,83 @@ var mux sync.Mutex
 var responseOk = []byte(`{"status": "ok"}` + "\n")
 var responseNoJob = []byte(`{"status": "no-job"}` + "\n")
 
+func Put(request Request, clientJobs map[int64]*Job) (json.RawMessage, error) {
+	if request.Queue == "" || request.Job == nil || request.Pri < 0 {
+		return nil, errors.New("put: missing one or more of queue, job, or pri")
+	}
+	if len(request.Queues) != 0 || request.Wait || request.ID != 0 {
+		return nil, errors.New("put: extra fields")
+	}
+	id := nextID()
+
+	mux.Lock()
+	if queues[request.Queue] == nil {
+		queues[request.Queue] = make(map[int64]*Job)
+	}
+	job := &Job{Priority: request.Pri, ID: id, Val: request.Job, Assignee: nil, Queue: request.Queue}
+	queues[request.Queue][id] = job
+	allJobs[id] = job
+	mux.Unlock()
+	return json.RawMessage(fmt.Sprintf(`{"status": "ok", "id":%d}`+"\n", id)), nil
+}
+
+func Get(conn *net.TCPConn, request Request, clientJobs map[int64]*Job) (*Job, bool, error) {
+	if request.Queue != "" || request.Job != nil || request.Pri != 0 {
+		return nil, false, errors.New("get: extra fields")
+	}
+	if len(request.Queues) == 0 {
+		return nil, false, errors.New("get: missing field Queues")
+	}
+	// If request.Wait, loop forever until we find a request with sufficient priority.
+	// we want the job with the HIGHEST priority in any of the queues
+	var maxJobQueue string
+	var maxJobID int64
+	var maxJobPriority = -1
+	var job *Job
+	for {
+		// Unlock after each check to allow jobs to be added,
+		// otherwise no one will be able to add a job for us to assign.
+		mux.Lock()
+		for _, k := range request.Queues {
+			for _, j := range queues[k] {
+				if j.Assignee != nil {
+					continue
+				}
+				if j.Priority > maxJobPriority {
+					maxJobPriority = j.Priority
+					maxJobQueue = k
+					maxJobID = j.ID
+				}
+			}
+		}
+		// If max found, assign to client and break
+		if maxJobPriority > -1 {
+			// we found a job
+			job = queues[maxJobQueue][maxJobID]
+			// assign to current client
+			job.Assignee = conn
+			clientJobs[job.ID] = job
+			mux.Unlock()
+			return job, true, nil
+		}
+		// Not found, so unlock so someone can add to the Queue.
+		mux.Unlock()
+		// If not waiting, send responseNoJob and listen for new request
+		if !request.Wait {
+			// Have to loop once before trying this
+			// Response no-job, found=false
+			return nil, false, nil
+		}
+		// Waiting, so just loop around again.
+	}
+	return nil, false, errors.New("Unreachable")
+}
+
 func handle09(conn *net.TCPConn) error {
 	defer conn.Close()
-	conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	//conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	//readDeadlineSeconds := 30 * time.Second
+	//conn.SetReadDeadline(time.Now().Add(readDeadlineSeconds))
 	conn.SetKeepAlive(true)
 	conn.SetKeepAlivePeriod(100 * time.Millisecond)
 
@@ -57,7 +145,14 @@ func handle09(conn *net.TCPConn) error {
 	sendErrf := func(format string, args ...any) {
 		msg := fmt.Sprintf(format, args...)
 		logger.Print("sendErrf: " + msg)
-		fmt.Fprintf(conn, `{"status": "error", "error": %q}`, msg)
+		resp := toJSONLine(struct {
+			Status string `json:"status"`
+			Error  string `json:"error"`
+		}{
+			Status: "error",
+			Error:  msg,
+		})
+		conn.Write(resp)
 	}
 	scanner := bufio.NewScanner(conn)
 	clientJobs := make(map[int64]*Job) // Job ID to job
@@ -76,106 +171,38 @@ func handle09(conn *net.TCPConn) error {
 READLINE:
 
 	for scanner.Scan() {
-		conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
-		request, err := fromJSON[struct {
-			Request string   `json:"request"` // "put", "get", "delete", "abort"
-			Queues  []string `json:"queues"`  // GET only
-			Wait    bool     `json:"wait"`    // GET only
-
-			Queue string          `json:"queue"` // PUT only
-			Job   json.RawMessage `json:"job"`   // PUT only
-			Pri   int             `json:"pri"`   // PUT only
-
-			ID int64 `json:"id"` // DELETE, ABORT only
-		}](scanner.Bytes())
+		logger.Println(scanner.Text())
+		//conn.SetReadDeadline(time.Now().Add(readDeadlineSeconds))
+		request, err := fromJSON[Request](scanner.Bytes())
 		if err != nil {
-			sendErrf("invalid request: %v", err)
+			sendErrf("invalid request: %s", err)
 			continue READLINE
 		}
-		logger.Println(scanner.Text())
 		switch request.Request {
 		default:
-			sendErrf("invalid request: unknown request type %q", request.Request)
+			sendErrf("invalid request: unknown request type %s", request.Request)
 			continue READLINE
 		case "put":
-			if request.Queue == "" || request.Job == nil || request.Pri < 0 {
-				sendErrf("put: missing one or more of queue, job, or pri")
-				continue READLINE
-			}
-			if len(request.Queues) != 0 || request.Wait || request.ID != 0 {
-				sendErrf("put: extra fields")
-				continue READLINE
-			}
-			id := nextID()
-
-			mux.Lock()
-			if queues[request.Queue] == nil {
-				queues[request.Queue] = make(map[int64]*Job)
-			}
-			job := &Job{Priority: request.Pri, ID: id, Val: request.Job, Assignee: nil, Queue: request.Queue}
-			queues[request.Queue][id] = job
-			allJobs[id] = job
-			mux.Unlock()
-			if _, err := fmt.Fprintf(conn, `{"status": "ok", "id":%d}`+"\n", id); err != nil {
+			response, err := Put(request, clientJobs)
+			if err != nil {
+				sendErrf("put: %s", err)
+			} else if _, err := conn.Write(response); err != nil {
 				return fmt.Errorf("put: %w", err)
 			}
 
 		case "get":
-			if request.Queue != "" || request.Job != nil || request.Pri != 0 {
-				sendErrf("get: extra fields")
+			job, found, err := Get(conn, request, clientJobs)
+			if err != nil {
+				sendErrf("get: %s", err)
 				continue READLINE
 			}
-			if len(request.Queues) == 0 {
-				sendErrf("get: missing field Queues")
+			if !found {
+				if _, err := conn.Write(responseNoJob); err != nil {
+					logger.Printf("get: %s", err)
+					return fmt.Errorf("get: %s", err) // client disconnected
+				}
 				continue READLINE
 			}
-			// If request.Wait, loop forever until we find a request with sufficient priority.
-			// we want the job with the HIGHEST priority in any of the queues
-			var maxJobQueue string
-			var maxJobID int64
-			var maxJobPriority = -1
-			var job *Job
-			for maxJobPriority == -1 {
-				// Unlock after each check to allow jobs to be added,
-				// otherwise no one will be able to add a job for us to assign.
-				mux.Lock()
-				for _, k := range request.Queues {
-					for _, j := range queues[k] {
-						if j.Assignee != nil {
-							continue
-						}
-						if j.Priority > maxJobPriority {
-							maxJobPriority = j.Priority
-							maxJobQueue = k
-							maxJobID = j.ID
-						}
-					}
-				}
-				// If max found, assign to client and break
-				if maxJobPriority > -1 {
-					// we found a job
-					job = queues[maxJobQueue][maxJobID]
-					// assign to current client
-					job.Assignee = conn
-					clientJobs[job.ID] = job
-					mux.Unlock()
-					goto ASSIGNED
-				}
-				// Not found, so unlock so someone can add to the Queue.
-				mux.Unlock()
-				// If not waiting, send responseNoJob and listen for new request
-				if !request.Wait {
-					// Have to loop once before trying this
-					if _, err := conn.Write(responseNoJob); err != nil {
-						return fmt.Errorf("get: %s", err) // client disconnected
-					}
-					logger.Println("response no-job")
-					continue READLINE
-				}
-				// Waiting, so just loop around again.
-			}
-
-		ASSIGNED:
 			// If we got here, we've already assigned a job
 			logger.Printf("Assigned job %d to conn %s", job.ID, conn.RemoteAddr().String())
 			resp := toJSONLine(struct {
@@ -192,7 +219,7 @@ READLINE:
 				Queue:  job.Queue,
 			})
 			if _, err := conn.Write(resp); err != nil {
-				log.Printf("get: %s", err)
+				logger.Printf("get: %s", err)
 				return fmt.Errorf("get: %s", err) // client disconnected
 			}
 		case "delete":
