@@ -88,7 +88,7 @@ func Get(conn *net.TCPConn, request Request, clientJobs map[int64]*Job) (*Job, b
 	var maxJobID int64
 	var maxJobPriority = -1
 	var job *Job
-	for {
+	for i := 0; ; i++ {
 		// Unlock after each check to allow jobs to be added,
 		// otherwise no one will be able to add a job for us to assign.
 		mux.Lock()
@@ -123,6 +123,7 @@ func Get(conn *net.TCPConn, request Request, clientJobs map[int64]*Job) (*Job, b
 			return nil, false, nil
 		}
 		// Waiting, so just loop around again.
+		time.Sleep(time.Duration(i) * 10 * time.Millisecond)
 	}
 	return nil, false, errors.New("Unreachable")
 }
