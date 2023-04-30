@@ -246,7 +246,9 @@ READLINE:
 				sendErrf("abort: bad id")
 				continue READLINE
 			}
+			mux.Lock()
 			_, ok := allJobs[request.ID]
+			mux.Unlock()
 			if !ok {
 				// Job does not exist: `{"status":"no-job"}`
 				conn.Write(responseNoJob)
