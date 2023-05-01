@@ -30,6 +30,8 @@ type Job struct {
 	Val      json.RawMessage
 	Assignee *net.TCPConn
 	Queue    string
+	// Index for priority queue consumption
+	index int
 }
 
 type Request struct {
@@ -48,9 +50,29 @@ var ids atomic.Int64
 
 func nextID() int64 { return ids.Add(1) }
 
-var queues = make(map[string]map[int64]*Job) // queue_name => id => Job
+// var queues = make(map[string]map[int64]*Job) // queue_name => id => Job
+var queues = make(map[string]*PriorityQueue) // queue_name => id => Job
+// var queues sync.Map
 var allJobs = make(map[int64]*Job)
+
+// TODO repurpose this to just be for allJobs?
 var mux sync.Mutex
+
+/*
+var queuePool = sync.Pool{New: func() any {
+	return &PriorityQueue{q: []*Job{}}
+}}
+
+func getQueue(name string) *PriorityQueue {
+	q := queuePool.Get().(*PriorityQueue)
+	val, loaded := queues.LoadOrStore(name, q)
+	if loaded {
+		// Return q to pool, don't need it yet
+		queuePool.Put(q)
+	}
+	return val.(*PriorityQueue)
+}
+*/
 
 var responseOk = []byte(`{"status": "ok"}` + "\n")
 var responseNoJob = []byte(`{"status": "no-job"}` + "\n")
@@ -66,12 +88,17 @@ func Put(request Request, clientJobs map[int64]*Job) (json.RawMessage, error) {
 
 	mux.Lock()
 	if queues[request.Queue] == nil {
-		queues[request.Queue] = make(map[int64]*Job)
+		queues[request.Queue] = &PriorityQueue{q: []*Job{}}
 	}
+	queue := queues[request.Queue]
+	//queue := getQueue(request.Queue)
 	job := &Job{Priority: request.Pri, ID: id, Val: request.Job, Assignee: nil, Queue: request.Queue}
-	queues[request.Queue][id] = job
+	//queue.mux.Lock()
+	queue.HPush(job)
+	//queue.mux.Unlock()
 	allJobs[id] = job
 	mux.Unlock()
+	log.Printf("Pushed job %d to queue %s", job.ID, job.Queue)
 	return json.RawMessage(fmt.Sprintf(`{"status": "ok", "id":%d}`+"\n", id)), nil
 }
 
@@ -84,31 +111,46 @@ func Get(conn *net.TCPConn, request Request, clientJobs map[int64]*Job) (*Job, b
 	}
 	// If request.Wait, loop forever until we find a request with sufficient priority.
 	// we want the job with the HIGHEST priority in any of the queues
-	var maxJobQueue string
-	var maxJobID int64
+	//var maxJobQueue string
+	//var maxJobID int64
 	var maxJobPriority = -1
+	var maxQueue *PriorityQueue
 	var job *Job
 	for i := 0; ; i++ {
 		// Unlock after each check to allow jobs to be added,
 		// otherwise no one will be able to add a job for us to assign.
 		mux.Lock()
+	FORQUEUE:
 		for _, k := range request.Queues {
-			for _, j := range queues[k] {
-				if j.Assignee != nil {
+			/*
+				maybeQ, ok := queues.Load(k)
+				if !ok {
 					continue
 				}
-				if j.Priority > maxJobPriority {
-					maxJobPriority = j.Priority
-					maxJobQueue = k
-					maxJobID = j.ID
-				}
+				q := maybeQ.(*PriorityQueue)
+			*/
+			q, found := queues[k]
+			if !found {
+				//continue
+				continue FORQUEUE
+			}
+			//q.mux.Lock()
+			j, ok := q.Max()
+			//q.mux.Unlock()
+			if !ok {
+				//continue
+				continue FORQUEUE
+			}
+			if j.Priority > maxJobPriority {
+				//log.Printf("Found job %d with priority %d", j.ID, j.Priority)
+				maxJobPriority = j.Priority
+				job = j
+				maxQueue = q
 			}
 		}
 		// If max found, assign to client and break
 		if maxJobPriority > -1 {
-			// we found a job
-			job = queues[maxJobQueue][maxJobID]
-			// assign to current client
+			job = maxQueue.HPop()
 			job.Assignee = conn
 			clientJobs[job.ID] = job
 			mux.Unlock()
@@ -161,8 +203,25 @@ func handle09(conn *net.TCPConn) error {
 		mux.Lock()
 		for _, job := range clientJobs {
 			if job.Assignee == conn {
+				// Be sure it's still alive
+				_, ok := allJobs[job.ID]
+				if !ok {
+					// Job was probably deleted
+					logger.Printf("Disconnecting %s. Job %d not available to abort.", conn.RemoteAddr().String(), job.ID)
+					continue
+				}
 				// Only nil out if it's assigned to this conn
 				job.Assignee = nil
+				// Return to queue
+				/*
+					maybeQ, ok := queues.Load(job.Queue)
+					if !ok {
+						panic(fmt.Sprintf("Queue %s does not exist but job %d specifies it", job.Queue, job.ID))
+					}
+					q := maybeQ.(*PriorityQueue)
+				*/
+				q := queues[job.Queue]
+				q.HPush(job)
 				logger.Printf("Disconnecting %s. Aborted job %d.", conn.RemoteAddr().String(), job.ID)
 			}
 		}
@@ -228,17 +287,39 @@ READLINE:
 				sendErrf("delete: bad id")
 				continue READLINE
 			}
-			j, ok := allJobs[request.ID]
+			logger.Println("DELETE: waiting for lock")
+			mux.Lock()
+			logger.Println("DELETE: got lock")
+			job, ok := allJobs[request.ID]
 			if !ok {
+				mux.Unlock()
 				logger.Printf("delete: id %d not found", request.ID)
 				conn.Write([]byte(responseNoJob))
 				continue READLINE
 			}
-			mux.Lock()
-			delete(queues[j.Queue], request.ID)
+			/*
+				maybeQ, ok := queues.Load(job.Queue)
+				if !ok {
+					// Shouldn't happen, since queue is always created before job in PUT
+					panic(fmt.Sprintf("Queue %s does not exist but job %d specifies it", job.Queue, job.ID))
+				}
+				q := maybeQ.(*PriorityQueue)
+			*/
+			if job.Assignee == nil {
+				// Only try removing from queue if unassigned!
+				q, ok := queues[job.Queue]
+				if !ok {
+					panic(fmt.Sprintf("DELETE: job %d has queue %s, but queue not found", job.ID, job.Queue))
+				}
+				//q.mux.Lock()
+				q.Delete(job)
+				//q.mux.Unlock()
+			}
 			delete(allJobs, request.ID)
-			delete(clientJobs, request.ID)
 			mux.Unlock()
+			logger.Println("DELETE: released lock")
+			delete(clientJobs, request.ID)
+			logger.Printf("Deleted %d from %s", request.ID, job.Queue)
 			conn.Write(responseOk)
 		case "abort":
 			//TODO don't have a great way to tell if ID is 0 or just missing. Make pointer?
@@ -252,6 +333,8 @@ READLINE:
 			if !ok {
 				// Job does not exist: `{"status":"no-job"}`
 				conn.Write(responseNoJob)
+				// May be deleted job that was owned by this client. Remove if so.
+				delete(clientJobs, request.ID)
 				continue READLINE
 			}
 			job, ok := clientJobs[request.ID]
@@ -259,11 +342,23 @@ READLINE:
 				sendErrf("abort: job %d not owned by client", request.ID)
 				continue READLINE
 			}
-			// Unset user
 			mux.Lock()
+			// Unset user
 			job.Assignee = nil
 			delete(clientJobs, job.ID)
+			// Return to queue
+			/*
+				maybeQ, ok := queues.Load(job.Queue)
+				if !ok {
+					// Shouldn't happen, since queue is always created before job in PUT
+					panic(fmt.Sprintf("Queue %s does not exist but job %d specifies it", job.Queue, job.ID))
+				}
+				q := maybeQ.(*PriorityQueue)
+			*/
+			q := queues[job.Queue]
+			q.HPush(job)
 			mux.Unlock()
+			logger.Printf("Aborted %d", job.ID)
 			conn.Write(responseOk)
 		}
 	}
