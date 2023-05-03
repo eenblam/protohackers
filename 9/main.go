@@ -14,6 +14,7 @@ import (
 	"time"
 )
 
+// Handy generics here courtesy of https://eblog.fly.dev/
 func toJSONLine[T any](t T) []byte {
 	b, err := json.Marshal(t)
 	if err != nil {
@@ -50,29 +51,10 @@ var ids atomic.Int64
 
 func nextID() int64 { return ids.Add(1) }
 
-// var queues = make(map[string]map[int64]*Job) // queue_name => id => Job
-var queues = make(map[string]*PriorityQueue) // queue_name => id => Job
-// var queues sync.Map
+var queues = make(map[string]*PriorityQueue)
 var allJobs = make(map[int64]*Job)
 
-// TODO repurpose this to just be for allJobs?
 var mux sync.Mutex
-
-/*
-var queuePool = sync.Pool{New: func() any {
-	return &PriorityQueue{q: []*Job{}}
-}}
-
-func getQueue(name string) *PriorityQueue {
-	q := queuePool.Get().(*PriorityQueue)
-	val, loaded := queues.LoadOrStore(name, q)
-	if loaded {
-		// Return q to pool, don't need it yet
-		queuePool.Put(q)
-	}
-	return val.(*PriorityQueue)
-}
-*/
 
 var responseOk = []byte(`{"status": "ok"}` + "\n")
 var responseNoJob = []byte(`{"status": "no-job"}` + "\n")
@@ -91,11 +73,8 @@ func Put(request Request, clientJobs map[int64]*Job) (json.RawMessage, error) {
 		queues[request.Queue] = &PriorityQueue{q: []*Job{}}
 	}
 	queue := queues[request.Queue]
-	//queue := getQueue(request.Queue)
 	job := &Job{Priority: request.Pri, ID: id, Val: request.Job, Assignee: nil, Queue: request.Queue}
-	//queue.mux.Lock()
 	queue.HPush(job)
-	//queue.mux.Unlock()
 	allJobs[id] = job
 	mux.Unlock()
 	log.Printf("Pushed job %d to queue %s", job.ID, job.Queue)
@@ -111,8 +90,6 @@ func Get(conn *net.TCPConn, request Request, clientJobs map[int64]*Job) (*Job, b
 	}
 	// If request.Wait, loop forever until we find a request with sufficient priority.
 	// we want the job with the HIGHEST priority in any of the queues
-	//var maxJobQueue string
-	//var maxJobID int64
 	var maxJobPriority = -1
 	var maxQueue *PriorityQueue
 	var job *Job
@@ -120,29 +97,16 @@ func Get(conn *net.TCPConn, request Request, clientJobs map[int64]*Job) (*Job, b
 		// Unlock after each check to allow jobs to be added,
 		// otherwise no one will be able to add a job for us to assign.
 		mux.Lock()
-	FORQUEUE:
 		for _, k := range request.Queues {
-			/*
-				maybeQ, ok := queues.Load(k)
-				if !ok {
-					continue
-				}
-				q := maybeQ.(*PriorityQueue)
-			*/
 			q, found := queues[k]
 			if !found {
-				//continue
-				continue FORQUEUE
+				continue
 			}
-			//q.mux.Lock()
 			j, ok := q.Max()
-			//q.mux.Unlock()
 			if !ok {
-				//continue
-				continue FORQUEUE
+				continue
 			}
 			if j.Priority > maxJobPriority {
-				//log.Printf("Found job %d with priority %d", j.ID, j.Priority)
 				maxJobPriority = j.Priority
 				job = j
 				maxQueue = q
@@ -213,20 +177,13 @@ func handle09(conn *net.TCPConn) error {
 				// Only nil out if it's assigned to this conn
 				job.Assignee = nil
 				// Return to queue
-				/*
-					maybeQ, ok := queues.Load(job.Queue)
-					if !ok {
-						panic(fmt.Sprintf("Queue %s does not exist but job %d specifies it", job.Queue, job.ID))
-					}
-					q := maybeQ.(*PriorityQueue)
-				*/
 				q := queues[job.Queue]
 				q.HPush(job)
 				logger.Printf("Disconnecting %s. Aborted job %d.", conn.RemoteAddr().String(), job.ID)
 			}
 		}
 		mux.Unlock()
-		logger.Println("Disconnected")
+		logger.Println("disconnected")
 	}()
 READLINE:
 
@@ -264,7 +221,7 @@ READLINE:
 				continue READLINE
 			}
 			// If we got here, we've already assigned a job
-			logger.Printf("Assigned job %d to conn %s", job.ID, conn.RemoteAddr().String())
+			logger.Printf("assigned job %d to conn %s", job.ID, conn.RemoteAddr().String())
 			resp := toJSONLine(struct {
 				Status string          `json:"status"`
 				ID     int64           `json:"id"`
@@ -287,9 +244,7 @@ READLINE:
 				sendErrf("delete: bad id")
 				continue READLINE
 			}
-			logger.Println("DELETE: waiting for lock")
 			mux.Lock()
-			logger.Println("DELETE: got lock")
 			job, ok := allJobs[request.ID]
 			if !ok {
 				mux.Unlock()
@@ -297,29 +252,18 @@ READLINE:
 				conn.Write([]byte(responseNoJob))
 				continue READLINE
 			}
-			/*
-				maybeQ, ok := queues.Load(job.Queue)
-				if !ok {
-					// Shouldn't happen, since queue is always created before job in PUT
-					panic(fmt.Sprintf("Queue %s does not exist but job %d specifies it", job.Queue, job.ID))
-				}
-				q := maybeQ.(*PriorityQueue)
-			*/
 			if job.Assignee == nil {
 				// Only try removing from queue if unassigned!
 				q, ok := queues[job.Queue]
 				if !ok {
-					panic(fmt.Sprintf("DELETE: job %d has queue %s, but queue not found", job.ID, job.Queue))
+					panic(fmt.Sprintf("delete: job %d has queue %s, but queue not found", job.ID, job.Queue))
 				}
-				//q.mux.Lock()
 				q.Delete(job)
-				//q.mux.Unlock()
 			}
 			delete(allJobs, request.ID)
 			mux.Unlock()
-			logger.Println("DELETE: released lock")
 			delete(clientJobs, request.ID)
-			logger.Printf("Deleted %d from %s", request.ID, job.Queue)
+			logger.Printf("deleted %d from %s", request.ID, job.Queue)
 			conn.Write(responseOk)
 		case "abort":
 			//TODO don't have a great way to tell if ID is 0 or just missing. Make pointer?
@@ -347,14 +291,6 @@ READLINE:
 			job.Assignee = nil
 			delete(clientJobs, job.ID)
 			// Return to queue
-			/*
-				maybeQ, ok := queues.Load(job.Queue)
-				if !ok {
-					// Shouldn't happen, since queue is always created before job in PUT
-					panic(fmt.Sprintf("Queue %s does not exist but job %d specifies it", job.Queue, job.ID))
-				}
-				q := maybeQ.(*PriorityQueue)
-			*/
 			q := queues[job.Queue]
 			q.HPush(job)
 			mux.Unlock()
@@ -366,15 +302,9 @@ READLINE:
 
 }
 
-func swapRemove[T any](s []T, i int) []T {
-	s[i] = s[len(s)-1]  // copy last element to index i
-	return s[:len(s)-1] // truncate slice
-}
-
 const port = 3339
 
 func main() {
-	//l, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	l, err := net.ListenTCP("tcp", &net.TCPAddr{Port: port})
 	if err != nil {
 		log.Fatalf("Could not listen on port %d: %s", port, err)

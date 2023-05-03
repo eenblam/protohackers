@@ -3,7 +3,6 @@ package main
 import (
 	"container/heap"
 	"log"
-	"sync"
 )
 
 /*
@@ -20,8 +19,13 @@ type Job struct {
 
 // See https://pkg.go.dev/container/heap#pkg-types
 type PriorityQueue struct {
-	mux sync.Mutex
-	q   []*Job
+	// For debugging
+	Name string
+	// We don't just use type PriorityQueue []*Job
+	// since push/pop/delete would require reassigning the
+	// queue pointer in the global queues map.
+	// Wrapping in a struct localizes the pointer concerns here.
+	q []*Job
 }
 
 func (pq PriorityQueue) Len() int { return len(pq.q) }
