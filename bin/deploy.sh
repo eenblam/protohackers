@@ -40,6 +40,7 @@ fi
 handle_interrupt() {
 	echo "Tearing down droplet ${NAME} with ID ${DROPLET}"
 	doctl compute droplet delete -f "$DROPLET"
+	exit 0
 }
 trap handle_interrupt SIGINT
 
