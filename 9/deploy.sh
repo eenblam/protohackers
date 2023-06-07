@@ -3,17 +3,17 @@
 NAME=protohackers-9
 TARGET=jobcentre
 KEY=~/.ssh/id_rsa_do
+FINGERPRINT=c8:79:0b:65:47:36:b8:77:83:8e:97:cf:c5:3b:90:0b
 
 # Just use existing droplet if it wasn't cleaned up somehow
 # (presumably by exiting too early)
-#		--size s-1vcpu-1gb \
 DROPLET=$(doctl compute droplet get "$NAME" --format=ID --no-header 2>/dev/null)
 if [ -z "$DROPLET" ]; then
 	if ! DROPLET=$(doctl compute droplet create \
 		--region lon1 \
 		--image debian-11-x64 \
 		--size s-1vcpu-2gb \
-		--ssh-keys c8:79:0b:65:47:36:b8:77:83:8e:97:cf:c5:3b:90:0b \
+		--ssh-keys "$FINGERPRINT" \
 		"$NAME" \
 		--format=ID \
 		--no-header); then
