@@ -12,7 +12,7 @@ if [ -z "$DROPLET" ]; then
 	if ! DROPLET=$(doctl compute droplet create \
 		--region lon1 \
 		--image debian-11-x64 \
-		--size s-2vcpu-4gb \
+		--size s-1vcpu-2gb \
 		--ssh-keys c8:79:0b:65:47:36:b8:77:83:8e:97:cf:c5:3b:90:0b \
 		$NAME \
 		--format=ID \
