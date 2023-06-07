@@ -1,7 +1,17 @@
 #!/bin/bash
 
-NAME=protohackers-9
-TARGET=jobcentre
+if [[ $# -ne 1 ]]; then
+	this=$(basename "$0")
+	echo "Expected one argument, got ${#}"
+	echo "Usage: ${this} <problem_id>"
+	echo "Example: ${this} 5"
+	exit 1
+fi
+
+# $1 can be anything that makes a valid droplet name
+NAME="protohackers-${1}"
+TARGET=solution
+# Change these
 KEY=~/.ssh/id_rsa_do
 FINGERPRINT=c8:79:0b:65:47:36:b8:77:83:8e:97:cf:c5:3b:90:0b
 
