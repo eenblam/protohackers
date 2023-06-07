@@ -62,4 +62,3 @@ scp -i "$KEY" \
 
 echo "Running binary. Ctrl+C to exit."
 ssh -i "$KEY" "root@${IP}" "/root/${TARGET}"
-#echo -- ssh -i "$KEY" "root@${IP}"
