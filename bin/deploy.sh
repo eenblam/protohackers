@@ -1,15 +1,13 @@
 #!/bin/bash
 
-if [[ $# -ne 1 ]]; then
-	this=$(basename "$0")
-	echo "Expected one argument, got ${#}"
-	echo "Usage: ${this} <problem_id>"
-	echo "Example: ${this} 5"
-	exit 1
-fi
+# Get the directory of the script *without* resolving symlink,
+# so each solution directory just symlinks to ../bin/deploy.sh.
+# This way you can `cd 9; ./deploy.sh` and the script will detect that you're in 9
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+d=$(basename "$SCRIPT_DIR")
 
-# $1 can be anything that makes a valid droplet name
-NAME="protohackers-${1}"
+# $d can be anything that makes a valid droplet name
+NAME="protohackers-${d}"
 TARGET=solution
 # Change these
 KEY=~/.ssh/id_rsa_do
