@@ -2,6 +2,7 @@ package linereversal
 
 import (
 	"bytes"
+	"strconv"
 	"testing"
 )
 
@@ -327,6 +328,135 @@ func TestMessageValidate(t *testing.T) {
 			}
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestEncode(t *testing.T) {
+	cases := []struct {
+		Description string
+		Msg         Msg
+		Data        []byte
+		Want        []byte
+		WantError   bool
+	}{
+		{
+			Description: "connect",
+			Msg: Msg{
+				Type:    "connect",
+				Session: 1234,
+			},
+			Want: []byte(`/connect/1234/`),
+		},
+		{
+			Description: "ack",
+			Msg: Msg{
+				Type:    "ack",
+				Session: 1234,
+				Length:  0,
+			},
+			Want: []byte(`/ack/1234/0/`),
+		},
+		{
+			Description: "data",
+			Msg: Msg{
+				Type:    "data",
+				Session: 1234,
+				Pos:     0,
+				Data:    []byte(`abc`),
+			},
+			Want: []byte(`/data/1234/0/abc/`),
+		},
+		{
+			Description: "Errors on unknown type",
+			Msg: Msg{
+				Type: "unknown",
+			},
+			WantError: true,
+		},
+	}
+	for _, test := range cases {
+		t.Run(test.Description, func(t *testing.T) {
+			buf := make([]byte, maxMessageSize)
+			n, err := test.Msg.encode(buf)
+			if test.WantError {
+				if err == nil {
+					t.Fatalf("Expected error but got none")
+				}
+				return
+			}
+			got := buf[:n]
+			if err != nil {
+				t.Fatalf("Unexpected error %s", err)
+			}
+			if !bytes.Equal(test.Want, got) {
+				t.Fatalf("Want [%s] Got [%s]", test.Want, got)
+			}
+		})
+	}
+}
+
+func TestPack(t *testing.T) {
+	aaa := func(n int) []byte {
+		b := make([]byte, n)
+		for i := 0; i < n; i++ {
+			b[i] = 'a'
+		}
+		return b
+	}
+	cases := []struct {
+		name     string
+		session  int
+		pos      int
+		data     []byte
+		wantN    int
+		wantData []byte
+	}{
+		{
+			name:    "empty data",
+			session: 1234,
+			pos:     0,
+			data:    []byte{},
+			wantN:   0,
+		},
+		{
+			name:     "single byte",
+			session:  1234,
+			pos:      0,
+			data:     []byte{0x01},
+			wantN:    1,
+			wantData: []byte{0x01},
+		},
+		{
+			name:     "we can't actually fit a buffer of maxMessageSize",
+			session:  1234, // 4
+			pos:      56,   // 2
+			data:     aaa(maxMessageSize),
+			wantN:    maxMessageSize - 9 - 4 - 2,
+			wantData: aaa(maxMessageSize - 9 - 4 - 2),
+		},
+		{
+			name: "greatest possible metadata size",
+			// Max out the lengths of string(session) and string(pos); this is the largest metadata a /data/ packet can have.
+			session: maxInt,
+			// pack doesn't care if we're writing beyond beyond maximal protocol capacity, that's for Validate() to decide.
+			// (I.e. it's fine if *sending* this message would mean sending too many bytes.)
+			pos:      maxInt,
+			data:     aaa(maxMessageSize),
+			wantN:    maxMessageSize - 9 - 2*len(strconv.Itoa(maxInt)),
+			wantData: aaa(maxMessageSize - 9 - 2*len(strconv.Itoa(maxInt))),
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m := Msg{Session: c.session, Pos: c.pos}
+			n := m.pack(c.data)
+			if n != c.wantN {
+				t.Fatalf("unexpected number of bytes packed: got %d, want %d", n, c.wantN)
+			}
+			if !bytes.Equal(m.Data, c.wantData) {
+				t.Fatalf("unexpected data: got %v, want %v", m.Data, c.wantData)
 			}
 		})
 	}

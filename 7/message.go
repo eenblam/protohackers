@@ -19,6 +19,7 @@ const maxInt = 2147483647
 type Msg struct {
 	Type    string
 	Session int
+	// Note that Pos and Length could be int32, given our maxInt constraint.
 	// type:data
 	Pos  int
 	Data []byte
@@ -49,9 +50,47 @@ func (m *Msg) Validate() error {
 	return nil
 }
 
-func parseMessage(bs []byte) (*Msg, error) {
-	//rest := bs
+// encode will write the message to the provided buffer, returning the number of bytes written.
+// An error will be returned if the message is of an unknown type.
+func (m *Msg) encode(buf []byte) (int, error) {
+	var data []byte
+	switch m.Type {
+	case "connect":
+		data = []byte(fmt.Sprintf("/connect/%d/", m.Session))
+	case "data":
+		data = []byte(fmt.Sprintf("/data/%d/%d/%s/", m.Session, m.Pos, m.Data))
+	case "ack":
+		data = []byte(fmt.Sprintf("/ack/%d/%d/", m.Session, m.Length))
+	case "close":
+		data = []byte(fmt.Sprintf("/close/%d/", m.Session))
+	default:
+		return 0, fmt.Errorf("cannot encode message of unknown type %s", m.Type)
+	}
+	return copy(buf, data), nil
+}
 
+// pack will copy data into the message's Data slice, returning the number of bytes copied from the input,
+// NOT the total size of the LRCP message.
+// The number of bytes that can be copied will depend on the lengths of the string representations
+// of the session ID and pos.
+// pack does *not* handle escaping slashes or validation.
+// The caller *must* first escape, and the packed Msg must be then validated.
+func (m *Msg) pack(data []byte) int {
+	// /data/SESSION/POS/DATA/
+	// So 9 bytes for /data////, plus len(string(Session)), plus len(string(Pos))
+	// Subtracting from maxMsgSize, we get the max length of Data we can use.
+	maxCopy := maxMessageSize - len(fmt.Sprintf("/data/%d/%d//", m.Session, m.Pos))
+	copySize := min(maxCopy, len(data))
+	// In case we want to reuse an existing Msg
+	if m.Data == nil || len(m.Data) < copySize {
+		m.Data = make([]byte, copySize)
+	}
+	copy(m.Data, data[:copySize])
+	m.Data = m.Data[:copySize]
+	return copySize
+}
+
+func parseMessage(bs []byte) (*Msg, error) {
 	if len(bs) == 0 {
 		return nil, errors.New("empty message")
 	}
