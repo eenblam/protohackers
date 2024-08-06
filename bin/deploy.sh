@@ -10,8 +10,8 @@ d=$(basename "$SCRIPT_DIR")
 NAME="protohackers-${d}"
 TARGET=solution
 # Change these
-KEY=~/.ssh/id_rsa_do
-FINGERPRINT=c8:79:0b:65:47:36:b8:77:83:8e:97:cf:c5:3b:90:0b
+KEY=~/.ssh/id_rsa_dolab
+FINGERPRINT=ad:69:2e:81:b8:30:c2:fb:4f:c2:cb:e3:65:3d:2f:11
 
 # Just use existing droplet if it wasn't cleaned up somehow
 # (presumably by exiting too early)
