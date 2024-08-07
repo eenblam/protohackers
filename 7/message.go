@@ -1,4 +1,4 @@
-package linereversal
+package main
 
 import (
 	"errors"

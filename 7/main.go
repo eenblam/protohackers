@@ -1,54 +1,50 @@
-package linereversal
+package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"net"
 )
 
-// "LRCP messages must be smaller than 1000 bytes."
+// "LRCP messages must be smaller than 1000 bytes.
+// You might have to break up data into multiple data
+// messages in order to fit it below this limit."
 const maxMessageSize = 999
 
 var (
-	localAddr  = "0.0.0.0"
-	localPort  = 4321
-	maxWorkers = 10
+	localAddr = "0.0.0.0"
+	localPort = 4321
 )
 
-func main() {
+// TODO add mux? sync.Map?
+var sessionStore = make(map[string]*Session)
 
-	UDPLocalAddr := &net.UDPAddr{
+func main() {
+	laddr := &net.UDPAddr{
 		IP:   net.ParseIP(localAddr),
 		Port: localPort,
 		Zone: "",
 	}
-	srv, err := net.ListenUDP("udp", UDPLocalAddr)
+
+	//ctx := context.Background()
+
+	l, err := Listen(laddr)
 	if err != nil {
-		log.Fatalf(`error listening on %s:%d: %s`, localAddr, localPort, err)
+		log.Fatalf(`error listening: %s`, err)
 	}
-	log.Printf(`listening on %s:%d`, localAddr, localPort)
+	// for { session := l.Accept() }
 
-	ctx := context.Background()
-	for i := 0; i < maxWorkers; i++ {
-		go worker(ctx, srv, fmt.Sprint(i))
-	}
-}
-
-func worker(ctx context.Context, srv *net.UDPConn, id string) {
-	buf := make([]byte, maxMessageSize)
+	session := l.Accept()
+	// do something with session
+	fmt.Println(session)
 	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			n, addr, err := srv.ReadFrom(buf)
-			if err != nil {
-				log.Fatalf(`error reading from %s: %s`, addr, err)
-			}
-			request := string(buf[:n])
-			log.Printf(`got %d bytes from %s: [%s]`, n, addr.String(), request)
+		buf := make([]byte, maxMessageSize)
+		n, err := session.Read(buf)
+		if err != nil {
+			sendClose(session.ID, session.Addr, session.conn)
+			log.Fatalf(`error reading from session: %s`, err)
 		}
+		// do something with msg
+		fmt.Println(buf[:n])
 	}
-
 }
