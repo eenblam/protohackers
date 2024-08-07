@@ -32,8 +32,7 @@ func (l *Listener) listen() {
 	// Get a packet
 	// Parse a message (or don't)
 	// New session: Create if CONNECT, otherwise send CLOSE.
-	// Not a new session: send DATA to session over buffered channel (send via select; just drop if buffer full)
-	// TODO what about ACK? Should we send the whole message to the session, or send the ack'd length over a channel?
+	// Not a new session: send ACK and DATA to session over buffered channel (send via select; just drop if buffer full)
 
 	buf := make([]byte, maxMessageSize)
 	for {
@@ -68,11 +67,15 @@ func (l *Listener) listen() {
 				// Send session to be Accept()'d. If this fails, close and drop the session.
 				select {
 				case l.acceptCh <- sessionStore[sessionKey]:
+					// On success, send ACK
+					if err = sessionStore[sessionKey].sendAck(0); err != nil {
+						log.Printf(`error sending ack to %s: %s`, addr, err)
+					}
 				default:
-					log.Printf(`failed to accept session %s, sending close`, session.Key())
+					log.Printf(`failed to accept session %s, sending close`, sessionKey)
 					session.Close()
 					sendClose(parsedMsg.Session, addr, l.conn)
-					delete(sessionStore, session.Key())
+					delete(sessionStore, sessionKey)
 				}
 			} else {
 				sendClose(parsedMsg.Session, addr, l.conn)
@@ -83,7 +86,7 @@ func (l *Listener) listen() {
 		case `connect`:
 			// We've already created a session before, so just ack.
 			// (This could be moved to the session on principle, but simplest to keep it here.)
-			if err = sendAck(0, addr, l.conn); err != nil {
+			if err = session.sendAck(0); err != nil {
 				log.Printf(`error sending ack to %s: %s`, addr, err)
 			}
 			continue

@@ -95,7 +95,7 @@ func (s *Session) Read(b []byte) (int, error) {
 	return n, nil
 }
 
-// appendRead appends incoming data to the session, returning final length of written data and an error.
+// appendRead appends incoming data to the session, returning final length of all written data and an error.
 // Error is non-nil if pos is invalid, exceeds length of previously received data, or exceeds max transmission size.
 func (s *Session) appendRead(pos int, b []byte) (int, error) {
 	s.readLock.Lock()
@@ -113,8 +113,8 @@ func (s *Session) appendRead(pos int, b []byte) (int, error) {
 	if pos < 0 {
 		return len(s.readBuffer), fmt.Errorf("invalid position %d < 0", pos)
 	}
-	if pos > len(s.readBuffer) {
-		return len(s.readBuffer), fmt.Errorf("position %d > current data length %d", pos, len(s.readBuffer))
+	if pos != len(s.readBuffer) {
+		return len(s.readBuffer), fmt.Errorf("position %d != current data length %d", pos, len(s.readBuffer))
 	}
 	if total := pos + len(s.readBuffer); total > maxInt {
 		return len(s.readBuffer), fmt.Errorf("total data length %d exceeds max transmission size %d", total, maxInt)
@@ -183,7 +183,7 @@ func (s *Session) readWorker() {
 				if err != nil {
 					log.Printf(`error appending data to session %s: %s`, s.Key(), err)
 				}
-				sendAck(n, s.Addr, s.conn)
+				s.sendAck(n)
 			case `connect`, `close`:
 				log.Printf(`unexpected [%s] message forwarded to reader for session %s`, msg.Type, s.Key())
 			default:
@@ -228,7 +228,7 @@ func (s *Session) writeWorker() {
 			log.Printf(`error encoding message: %s`, err)
 			return
 		}
-		_, err = sendData(buf[:encodedN], s.Addr, s.conn)
+		_, err = s.sendData(buf[:encodedN])
 		if err != nil {
 			log.Printf(`error sending data message: %s`, err)
 			return
@@ -253,16 +253,14 @@ func (s *Session) writeWorker() {
 	}
 }
 
-// sendAck sends an acknowledgement of receiving up to length (unescaped) bytes.
-//
-// This is a helper function and not defined on Session since it should be sent for a specific length,
-// not necessarily the current length of the session data.
-//
-// length, err := s.Append(n, data); if err != nil { sendAck(n, s.Addr, conn) }
-func sendAck(length int, addr net.Addr, conn *net.UDPConn) error {
+// sendAck sends an acknowledgement of a given session length.
+// The session's current length isn't strictly used, since we sometimes need to send something else.
+// For example, we should always respond to a duplicate connect with /ack/SESSION/0/
+// (Unclear if *any* ack is fine in that case, but docs specify to send 0.)
+func (s *Session) sendAck(length int) error {
 	// Send UDP ack message to Addr
-	msg := []byte(fmt.Sprintf(`/ack/%d/`, length))
-	n, _, err := conn.WriteMsgUDP(msg, nil, addr.(*net.UDPAddr))
+	msg := []byte(fmt.Sprintf(`/ack/%d/%d/`, s.ID, len(s.readBuffer)))
+	n, _, err := s.conn.WriteMsgUDP(msg, nil, s.Addr.(*net.UDPAddr))
 	if err != nil {
 		return fmt.Errorf("error sending ack message: %s", err)
 	}
@@ -272,8 +270,9 @@ func sendAck(length int, addr net.Addr, conn *net.UDPConn) error {
 	return nil
 }
 
-func sendData(packedData []byte, addr net.Addr, conn *net.UDPConn) (int, error) {
-	n, _, err := conn.WriteMsgUDP(packedData, nil, addr.(*net.UDPAddr))
+// sendData sends a data message to the session's peer.
+func (s *Session) sendData(packedData []byte) (int, error) {
+	n, _, err := s.conn.WriteMsgUDP(packedData, nil, s.Addr.(*net.UDPAddr))
 	//TODO do I anticipate an issue for n!=len(packedData)?
 	return n, err
 
