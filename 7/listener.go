@@ -34,6 +34,7 @@ func (l *Listener) listen() {
 	// New session: Create if CONNECT, otherwise send CLOSE.
 	// Not a new session: send ACK and DATA to session over buffered channel (send via select; just drop if buffer full)
 
+	sessionStore := make(map[string]*Session)
 	buf := make([]byte, maxMessageSize)
 	for {
 		// Read a packet
@@ -57,7 +58,6 @@ func (l *Listener) listen() {
 		// Sessions are supposedly guaranteed to be unique to IP addresses,
 		// but it's easy enough to prevent collisions by including the IP address and port in our key.
 		sessionKey := fmt.Sprintf(`%s-%d`, addr.String(), parsedMsg.Session)
-		//TODO handle concurrent access to sessionStore!
 		session, ok := sessionStore[sessionKey]
 		if !ok {
 			// Unrecognized session. Create a new session for CONNECT, otherwise just send a close.
