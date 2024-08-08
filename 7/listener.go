@@ -100,7 +100,7 @@ func (l *Listener) listen() {
 			// Send data to session.
 			// Don't ACK since we may drop packets here.
 			select {
-			case session.readCh <- parsedMsg:
+			case session.receiveCh <- parsedMsg:
 			default:
 				// Do nothing; just drop the packet.
 				log.Printf(`dropped packet for session %s`, session.Key())

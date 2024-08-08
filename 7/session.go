@@ -31,8 +31,11 @@ type Session struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	// readCh is a channel to receive messages from the listener
-	readCh chan *Msg
+	// receiveCh is a channel to receive messages from the listener
+	receiveCh chan *Msg
+	// readCh signals that data is available for reading.
+	// This channel should be buffered to allow .Read and .readWorker to communicate without blocking.
+	readCh chan bool
 
 	// readBuffer is the session's received data.
 	readBuffer []byte
@@ -50,13 +53,13 @@ type Session struct {
 func NewSession(addr net.Addr, id int, conn *net.UDPConn) *Session {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Session{
-		Addr: addr,
-		ID:   id,
-		conn: conn,
-		//TODO probably wanna buffer the channel, at least n=1
-		readCh: make(chan *Msg),
-		ctx:    ctx,
-		cancel: cancel,
+		Addr:      addr,
+		ID:        id,
+		conn:      conn,
+		receiveCh: make(chan *Msg, 1),
+		readCh:    make(chan bool, 1),
+		ctx:       ctx,
+		cancel:    cancel,
 		//TODO reconsider these default sizes
 		readBuffer:  make([]byte, 0, 1024),
 		writeBuffer: make([]byte, 0, 1024),
@@ -73,19 +76,19 @@ func (s *Session) Key() string {
 
 // Read implements the io.Reader interface on the session's data buffer.
 func (s *Session) Read(b []byte) (int, error) {
-	//TODO this doesn't work as desired right now.
-	// Want this to block until a read is ready AND not hold the lock while waiting.
-	// ... I suppose I *could* just receive on a channel here, but that seems like it could lead to dropped more packets?
-	s.readLock.Lock()
-	defer s.readLock.Unlock()
 	select {
 	case <-s.ctx.Done():
 		// If we're closed AND we've read all the data, return EOF.
+		s.readLock.Lock()
+		defer s.readLock.Unlock()
 		if s.readIndex >= int64(len(s.readBuffer)) {
 			return 0, io.EOF
 		}
 		// Otherwise, proceed as normal. It's fine to read from a closed session.
-	default:
+	case <-s.readCh:
+		// Data is available for reading.
+		s.readLock.Lock()
+		defer s.readLock.Unlock()
 	}
 	if s.readIndex >= int64(len(s.readBuffer)) {
 		return 0, nil
@@ -166,7 +169,7 @@ func (s *Session) readWorker() {
 		select {
 		case <-s.ctx.Done():
 			return
-		case msg := <-s.readCh:
+		case msg := <-s.receiveCh:
 			switch msg.Type {
 			case `ack`:
 				// If ack > session.lastAck, update session.lastAck
