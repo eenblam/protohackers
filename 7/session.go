@@ -26,6 +26,8 @@ type Session struct {
 	// The UDP connection to send messages on.
 	// Incoming messages are de-muxed by the listener.
 	conn *net.UDPConn
+	// Message pool for re-use.
+	pool *sync.Pool
 
 	// Context for closing the session.
 	ctx    context.Context
@@ -50,12 +52,13 @@ type Session struct {
 	writeBuffer []byte
 }
 
-func NewSession(addr net.Addr, id int, conn *net.UDPConn) *Session {
+func NewSession(addr net.Addr, id int, conn *net.UDPConn, pool *sync.Pool) *Session {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Session{
 		Addr:      addr,
 		ID:        id,
 		conn:      conn,
+		pool:      pool,
 		receiveCh: make(chan *Msg, 1),
 		readCh:    make(chan bool, 1),
 		ctx:       ctx,
@@ -193,6 +196,7 @@ func (s *Session) readWorker() {
 			default:
 				log.Printf(`unexpected message type %s for session %s`, msg.Type, s.Key())
 			}
+			s.pool.Put(msg)
 		}
 	}
 }

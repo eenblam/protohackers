@@ -4,11 +4,14 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"sync"
 )
 
 type Listener struct {
 	conn     *net.UDPConn
 	acceptCh chan *Session
+	// Message pool for incoming messages
+	pool *sync.Pool
 }
 
 func Listen(laddr *net.UDPAddr) (*Listener, error) {
@@ -22,6 +25,7 @@ func Listen(laddr *net.UDPAddr) (*Listener, error) {
 	l := &Listener{
 		conn:     conn,
 		acceptCh: make(chan *Session),
+		pool:     &sync.Pool{New: func() any { return &Msg{} }},
 	}
 	go l.listen()
 
@@ -45,10 +49,9 @@ func (l *Listener) listen() {
 		rawMsg := buf[:n]
 		log.Printf(`got %d bytes from %s: [%s]`, n, addr.String(), string(rawMsg))
 
-		// Parse a message
-		//TODO could use a sync.Pool here to avoid repeated allocations of new Msgs
-		parsedMsg, err := parseMessage(rawMsg)
-		if err != nil {
+		// Parse a message; pull from pool since we'd otherwise be allocating a lot of these.
+		parsedMsg := l.pool.Get().(*Msg)
+		if err = parseMessageInto(parsedMsg, rawMsg); err != nil {
 			// Just drop invalid messages
 			log.Printf(`error parsing message: %s`, err)
 			continue
@@ -63,7 +66,7 @@ func (l *Listener) listen() {
 			// Unrecognized session. Create a new session for CONNECT, otherwise just send a close.
 			if parsedMsg.Type == `connect` {
 				// Persist session
-				sessionStore[sessionKey] = NewSession(addr, parsedMsg.Session, l.conn)
+				sessionStore[sessionKey] = NewSession(addr, parsedMsg.Session, l.conn, l.pool)
 				// Send session to be Accept()'d. If this fails, close and drop the session.
 				select {
 				case l.acceptCh <- sessionStore[sessionKey]:
