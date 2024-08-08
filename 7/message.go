@@ -16,6 +16,11 @@ import (
 // "Numeric field values must be smaller than 2147483648."
 const maxInt = 2147483647
 
+// "LRCP messages must be smaller than 1000 bytes.
+// You might have to break up data into multiple data
+// messages in order to fit it below this limit."
+const maxMessageSize = 999
+
 type Msg struct {
 	Type    string
 	Session int
