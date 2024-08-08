@@ -78,6 +78,7 @@ func (l *Listener) listen() {
 					delete(sessionStore, sessionKey)
 				}
 			} else {
+				log.Printf(`unrecognized session [%s]; sending close`, sessionKey)
 				sendClose(parsedMsg.Session, addr, l.conn)
 			}
 			continue
@@ -92,6 +93,7 @@ func (l *Listener) listen() {
 			continue
 		case `close`:
 			// Close session and remove from store.
+			log.Printf(`peer disconnect; closing session [%s]`, session.Key())
 			session.Close()
 			sendClose(parsedMsg.Session, addr, l.conn)
 			delete(sessionStore, session.Key())
