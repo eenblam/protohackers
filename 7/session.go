@@ -172,14 +172,15 @@ func (s *Session) readWorker() {
 		case msg := <-s.receiveCh:
 			switch msg.Type {
 			case `ack`:
-				// If ack > session.lastAck, update session.lastAck
-				current := s.lastAck.Load()
-				if msg.Length > int(s.lastAck.Load()) {
-					if s.lastAck.CompareAndSwap(current, int32(msg.Length)) { // success
+				// As long as ack'd length > session.lastAck, try to update session.lastAck
+				for {
+					if current := s.lastAck.Load(); msg.Length > int(current) {
+						if s.lastAck.CompareAndSwap(current, int32(msg.Length)) { // success
+							break
+						}
+					} else { // ack <= session.lastAck; ignore
 						break
 					}
-				} else { // ack <= session.lastAck; ignore
-					break
 				}
 			case `data`:
 				n, err := s.appendRead(msg.Pos, msg.Data)
