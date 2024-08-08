@@ -109,7 +109,7 @@ func (l *Listener) listen() {
 			}
 			continue
 		default:
-			//TODO log unexpected packet?
+			log.Printf(`unexpected packet type [%s] for session [%s]`, parsedMsg.Type, session.Key())
 		}
 	}
 }
