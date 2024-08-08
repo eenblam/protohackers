@@ -247,7 +247,6 @@ func (s *Session) writeWorker() {
 			writeIndex = int(s.lastAck.Load())
 			continue
 		default:
-			//TODO need a lock for safe access to writeBuffer!
 			tryWrite()
 		}
 	}
