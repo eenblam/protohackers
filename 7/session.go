@@ -12,7 +12,14 @@ import (
 )
 
 // How long to wait before retransmitting unacknowledged data messages.
-const RetransmissionTimeout = 3
+// "retransmission timeout: the time to wait before retransmitting a message.
+// Suggested default value: 3 seconds."
+const RetransmissionTimeout = 3 * time.Second
+
+// How long to wait for a new message before timing out.
+// "session expiry timeout: the time to wait before accepting that a peer has disappeared,
+// in the event that no responses are being received. Suggested default value: 60 seconds."
+const ReadTimeout = 60 * time.Second
 
 type Session struct {
 	// Synchronizes Session.Read and Session.readWorker
@@ -20,8 +27,10 @@ type Session struct {
 	// Synchronizes Session.Write and Session.writeWorker
 	writeLock sync.Mutex
 
+	// The peer's address.
 	Addr net.Addr
-	ID   int
+	// The session's unique ID used in LRCP messages (e.g. SESSION in /data/SESSION/POS/DATA/).
+	ID int
 
 	// The UDP connection to send messages on.
 	// Incoming messages are de-muxed by the listener.
@@ -32,6 +41,10 @@ type Session struct {
 	// Context for closing the session.
 	ctx    context.Context
 	cancel context.CancelFunc
+
+	// timeoutCh is a channel to signal to the Listener that the peer has timed out.
+	// Necessary so the Listener can reap the session from the session store.
+	timeoutCh chan *Session
 
 	// receiveCh is a channel to receive messages from the listener
 	receiveCh chan *Msg
@@ -52,13 +65,14 @@ type Session struct {
 	writeBuffer []byte
 }
 
-func NewSession(addr net.Addr, id int, conn *net.UDPConn, pool *sync.Pool) *Session {
+func NewSession(addr net.Addr, id int, conn *net.UDPConn, pool *sync.Pool, timeoutCh chan *Session) *Session {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Session{
 		Addr:      addr,
 		ID:        id,
 		conn:      conn,
 		pool:      pool,
+		timeoutCh: timeoutCh,
 		receiveCh: make(chan *Msg, 1),
 		readCh:    make(chan bool, 1),
 		ctx:       ctx,
@@ -168,11 +182,23 @@ func (s *Session) Close() {
 }
 
 func (s *Session) readWorker() {
+	timeoutTimer := time.NewTimer(ReadTimeout)
+
 	for {
 		select {
 		case <-s.ctx.Done():
 			return
+		case <-timeoutTimer.C:
+			// Session has expired; close it.
+			//TODO need to message Listener
+			s.timeoutCh <- s
 		case msg := <-s.receiveCh:
+			// Reset session timeout
+			if !timeoutTimer.Stop() { // Must Stop timer and drain the channel before a Reset
+				<-timeoutTimer.C
+			}
+			timeoutTimer.Reset(ReadTimeout)
+
 			switch msg.Type {
 			case `ack`:
 				// As long as ack'd length > session.lastAck, try to update session.lastAck
@@ -203,7 +229,7 @@ func (s *Session) readWorker() {
 
 // writeWorker is a per-session goroutine that sends data from the session's writeBuffer.
 func (s *Session) writeWorker() {
-	ticker := time.NewTicker(RetransmissionTimeout * time.Second)
+	ticker := time.NewTicker(RetransmissionTimeout)
 	writeIndex := 0
 
 	// Select on a time.Ticker for N seconds, close channel, or default

@@ -8,9 +8,12 @@ import (
 )
 
 type Listener struct {
-	conn     *net.UDPConn
+	conn *net.UDPConn
+	// acceptCh syncronizes Accept() with the listen() goroutine.
 	acceptCh chan *Session
-	// Message pool for incoming messages
+	// timeoutCh allows sessions to signal that their peer has timed out.
+	timeoutCh chan *Session
+	// *Msg pool for incoming messages
 	pool *sync.Pool
 }
 
@@ -23,9 +26,10 @@ func Listen(laddr *net.UDPAddr) (*Listener, error) {
 	log.Printf(`listening on %s:%d`, laddr.IP, laddr.Port)
 
 	l := &Listener{
-		conn:     conn,
-		acceptCh: make(chan *Session),
-		pool:     &sync.Pool{New: func() any { return &Msg{} }},
+		conn:      conn,
+		acceptCh:  make(chan *Session),
+		timeoutCh: make(chan *Session),
+		pool:      &sync.Pool{New: func() any { return &Msg{} }},
 	}
 	go l.listen()
 
@@ -41,6 +45,16 @@ func (l *Listener) listen() {
 	sessionStore := make(map[string]*Session)
 	buf := make([]byte, maxMessageSize)
 	for {
+		// Handle any timed-out sessions
+		select {
+		case session := <-l.timeoutCh:
+			log.Printf(`session [%s] timed out`, session.Key())
+			session.Close()
+			sendClose(session.ID, session.Addr, l.conn)
+			delete(sessionStore, session.Key())
+		default:
+		}
+
 		// Read a packet
 		n, addr, err := l.conn.ReadFrom(buf)
 		if err != nil {
@@ -66,7 +80,7 @@ func (l *Listener) listen() {
 			// Unrecognized session. Create a new session for CONNECT, otherwise just send a close.
 			if parsedMsg.Type == `connect` {
 				// Persist session
-				sessionStore[sessionKey] = NewSession(addr, parsedMsg.Session, l.conn, l.pool)
+				sessionStore[sessionKey] = NewSession(addr, parsedMsg.Session, l.conn, l.pool, l.timeoutCh)
 				// Send session to be Accept()'d. If this fails, close and drop the session.
 				select {
 				case l.acceptCh <- sessionStore[sessionKey]:
