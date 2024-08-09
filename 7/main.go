@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"fmt"
 	"log"
 	"net"
 	"slices"
@@ -35,16 +34,17 @@ func reverseSessionHandler(session *Session) {
 	scanner := bufio.NewScanner(session)
 	for scanner.Scan() {
 		if err := scanner.Err(); err != nil {
-			log.Println(err)
+			log.Printf(`Session[%s] error reading: %s`, session.Key(), err)
 			continue
 		}
 		data := scanner.Bytes()
-		fmt.Println(data)
+		log.Printf(`Session[%s] received message: %s`, session.Key(), data)
 		slices.Reverse(data)
 		data = append(data, '\n')
 		_, err := session.Write(data)
 		if err != nil {
 			log.Printf(`error writing to session [%s]: %s`, session.Key(), err)
 		}
+		log.Printf(`Session[%s] sent message: %s`, session.Key(), data)
 	}
 }
