@@ -15,6 +15,8 @@ type Listener struct {
 	timeoutCh chan *Session
 	// *Msg pool for incoming messages
 	pool *sync.Pool
+	// sessionStore is a map of session keys to sessions.
+	sessionStore sync.Map
 }
 
 func Listen(laddr *net.UDPAddr) (*Listener, error) {
@@ -31,9 +33,20 @@ func Listen(laddr *net.UDPAddr) (*Listener, error) {
 		timeoutCh: make(chan *Session),
 		pool:      &sync.Pool{New: func() any { return &Msg{} }},
 	}
+	go l.handleTimeouts()
 	go l.listen()
 
 	return l, nil
+}
+
+func (l *Listener) handleTimeouts() {
+	for {
+		session := <-l.timeoutCh
+		log.Printf(`session [%s] timed out`, session.Key())
+		session.Close()
+		sendClose(session.ID, session.Addr, l.conn)
+		l.sessionStore.Delete(session.Key())
+	}
 }
 
 func (l *Listener) listen() {
@@ -42,7 +55,6 @@ func (l *Listener) listen() {
 	// New session: Create if CONNECT, otherwise send CLOSE.
 	// Not a new session: send ACK and DATA to session over buffered channel (send via select; just drop if buffer full)
 
-	sessionStore := make(map[string]*Session)
 	buf := make([]byte, maxMessageSize)
 	for {
 		// Handle any timed-out sessions
@@ -51,7 +63,7 @@ func (l *Listener) listen() {
 			log.Printf(`session [%s] timed out`, session.Key())
 			session.Close()
 			sendClose(session.ID, session.Addr, l.conn)
-			delete(sessionStore, session.Key())
+			l.sessionStore.Delete(session.Key())
 		default:
 		}
 
@@ -74,53 +86,66 @@ func (l *Listener) listen() {
 		// Find or create a session (or send a close for a non-CONNECT to an unrecognized session)
 		// Sessions are supposedly guaranteed to be unique to IP addresses,
 		// but it's easy enough to prevent collisions by including the IP address and port in our key.
-		sessionKey := fmt.Sprintf(`%s-%d`, addr.String(), parsedMsg.Session)
-		session, ok := sessionStore[sessionKey]
-		if !ok {
-			// Unrecognized session. Create a new session for CONNECT, otherwise just send a close.
-			if parsedMsg.Type == `connect` {
-				// Persist session
-				session = NewSession(addr, parsedMsg.Session, l.conn, l.pool, l.timeoutCh)
-				// Send session to be Accept()'d. If this fails, just drop the connect and wait for another.
+		var session *Session
+		if parsedMsg.Type == `connect` {
+			// Create pre-load to keep critical section as small as possible.
+			// (Alternative is a longer mutex lock to load, create, then store.
+			// The downside with current approach is creating a session for redundant CONNECTs.)
+			newSession := NewSession(addr, parsedMsg.Session, l.conn, l.pool, l.timeoutCh)
+			loadedSession, loaded := l.sessionStore.LoadOrStore(newSession.Key(), newSession)
+			if loaded {
+				// Existing session. Close the new one and proceed.
+				newSession.Close()
+				session = loadedSession.(*Session)
+			} else {
+				// *loadedSession == *newSession. Send to accept channel. Tear down if we can't.
+				session = newSession
 				select {
 				case l.acceptCh <- session:
-					sessionStore[sessionKey] = session
-					// On success, send ACK
-					if err = sessionStore[sessionKey].sendAck(0); err != nil {
-						log.Printf(`error sending ack to %s: %s`, addr, err)
-					}
+					log.Printf(`listener accepted session [%s]`, session.Key())
 				default:
-					log.Printf(`failed to accept session %s`, sessionKey)
+					log.Printf(`listener failed to accept session [%s]`, session.Key())
+					// Close session and remove from store.
+					// Don't ack since we dropped. Don't *send* a CLOSE so peer can retry.
+					session.Close()
+					l.sessionStore.Delete(session.Key())
+					continue
 				}
-			} else {
-				log.Printf(`unrecognized session [%s]; sending close`, sessionKey)
-				sendClose(parsedMsg.Session, addr, l.conn)
 			}
-			continue
-		}
-		switch parsedMsg.Type {
-		case `connect`:
-			// We've already created a session before, so just ack.
-			// (This could be moved to the session on principle, but simplest to keep it here.)
+			// Regardless, nothing more to do here but send an ACK. If this fails, they can always retry the CONNECT.
 			if err = session.sendAck(0); err != nil {
 				log.Printf(`error sending ack to %s: %s`, addr, err)
 			}
+			continue
+		} else {
+			// Not a connect. Try to load. Continue on failure.
+			loadedSession, loaded := l.sessionStore.Load(fmt.Sprintf("%s-%d", addr, parsedMsg.Session))
+			if !loaded {
+				sendClose(parsedMsg.Session, addr, l.conn)
+				continue
+			}
+			session = loadedSession.(*Session)
+		}
+		switch parsedMsg.Type {
+		case `connect`:
+			log.Printf(`unexpected handling of connect message for session [%s]; this should be unreachable`, session.Key())
 			continue
 		case `close`:
 			// Close session and remove from store.
 			log.Printf(`peer disconnect; closing session [%s]`, session.Key())
 			session.Close()
 			sendClose(parsedMsg.Session, addr, l.conn)
-			delete(sessionStore, session.Key())
+			l.sessionStore.Delete(session.Key())
 			continue
 		case `ack`, `data`:
-			// Send data to session.
-			// Don't ACK since we may drop packets here.
+			// Send ACK and DATA to session.
+			// Don't acknowledge DATA yet, since we may drop packets here.
 			select {
 			case session.receiveCh <- parsedMsg:
 			default:
 				// Do nothing; just drop the packet.
 				log.Printf(`dropped packet for session %s`, session.Key())
+				l.pool.Put(parsedMsg)
 			}
 			continue
 		default:
