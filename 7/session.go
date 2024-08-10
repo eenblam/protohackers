@@ -154,26 +154,12 @@ func (s *Session) Write(b []byte) (int, error) {
 		return len(s.writeBuffer), fmt.Errorf("session %s is closed", s.Key())
 	default:
 	}
-	// Count slashes to get total length; error if this would be an illegal write
-	// NOTE: we could instead write until we total maxInt, then return (maxInt, error).
-	slashes := 0
-	for _, c := range b {
-		if c == '/' || c == '\\' {
-			slashes++
-		}
-	}
-	if total := len(s.writeBuffer) + len(b) + slashes; total > maxInt {
+	total := len(s.writeBuffer) + len(b)
+	if total > maxInt {
 		return len(s.writeBuffer), fmt.Errorf("total data length %d exceeds max transmission size %d", total, maxInt)
 	}
-	// Copy data, escaping slashes
-	for _, c := range b {
-		if c == '/' || c == '\\' {
-			s.writeBuffer = append(s.writeBuffer, '\\')
-		}
-		s.writeBuffer = append(s.writeBuffer, c)
-	}
-
-	return len(s.writeBuffer), nil
+	s.writeBuffer = append(s.writeBuffer, b...)
+	return len(b), nil
 }
 
 // Close current session.
@@ -213,6 +199,7 @@ func (s *Session) readWorker() {
 					}
 				}
 			case `data`:
+				log.Printf(`DEBUG appending data to session: [%s][%x]`, msg.Data, msg.Data)
 				n, err := s.appendRead(msg.Pos, msg.Data)
 				// Always send an ack *of current length*, regardless of error.
 				s.sendAck(n)
@@ -264,9 +251,12 @@ func (s *Session) writeWorker() {
 			return
 		}
 		// Send from current writeIndex, incrementing as we go.
-		// Note that slashes should already be escaped.
 		msg.Pos = writeIndex
 		packedN := msg.pack(s.writeBuffer[writeIndex:])
+		if err := msg.Validate(); err != nil {
+			log.Printf(`error validating message [%v+]: %s`, msg, err)
+			return
+		}
 		encodedN, err := msg.encode(buf)
 		if err != nil {
 			log.Printf(`error encoding message: %s`, err)

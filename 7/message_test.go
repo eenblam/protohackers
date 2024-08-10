@@ -453,16 +453,32 @@ func TestPack(t *testing.T) {
 			wantN:    maxMessageSize - 9 - 2*len(strconv.Itoa(maxInt)),
 			wantData: aaa(maxMessageSize - 9 - 2*len(strconv.Itoa(maxInt))),
 		},
+		{
+			name:     "slashes",
+			session:  1234, // 4
+			pos:      56,   // 2
+			data:     []byte(`abc/def/ghi\jkl\mno`),
+			wantN:    19,
+			wantData: []byte(`abc\/def\/ghi\\jkl\\mno`),
+		},
+		{
+			name:     "don't write final slash if we can't escape it",
+			session:  1234,                                     // 4
+			pos:      56,                                       // 2
+			data:     append(aaa(maxMessageSize-9-4-2-1), '/'), // 9-4-2 for metadata, -1 for final slash
+			wantN:    maxMessageSize - 9 - 4 - 2 - 1,
+			wantData: aaa(maxMessageSize - 9 - 4 - 2 - 1),
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			m := Msg{Session: c.session, Pos: c.pos}
 			n := m.pack(c.data)
-			if n != c.wantN {
-				t.Fatalf("unexpected number of bytes packed: got %d, want %d", n, c.wantN)
-			}
 			if !bytes.Equal(m.Data, c.wantData) {
 				t.Fatalf("unexpected data: got %v, want %v", m.Data, c.wantData)
+			}
+			if n != c.wantN {
+				t.Fatalf("unexpected number of bytes packed: got %d, want %d", n, c.wantN)
 			}
 		})
 	}

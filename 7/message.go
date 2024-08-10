@@ -77,22 +77,49 @@ func (m *Msg) encode(buf []byte) (int, error) {
 // pack will copy data into the message's Data slice, returning the number of bytes copied from the input,
 // NOT the total size of the LRCP message.
 // The number of bytes that can be copied will depend on the lengths of the string representations
-// of the session ID and pos.
-// pack does *not* handle escaping slashes or validation.
-// The caller *must* first escape, and the packed Msg must be then validated.
+// of the session ID and pos, and on the number of slashes that must be escaped.
+// pack does *not* handle validation! Call Validate() after calling pack.
 func (m *Msg) pack(data []byte) int {
 	// /data/SESSION/POS/DATA/
 	// So 9 bytes for /data////, plus len(string(Session)), plus len(string(Pos))
 	// Subtracting from maxMsgSize, we get the max length of Data we can use.
 	maxCopy := maxMessageSize - len(fmt.Sprintf("/data/%d/%d//", m.Session, m.Pos))
-	copySize := min(maxCopy, len(data))
-	// In case we want to reuse an existing Msg
+
+	// Count slashes to get length of escaped data
+	slashes := 0
+	for _, c := range data {
+		if c == '/' || c == '\\' {
+			slashes++
+		}
+	}
+
+	copySize := min(maxCopy, len(data)+slashes)
+
+	// In case we want to reuse an existing Msg. This Msg is likely reused via a pool.
 	if m.Data == nil || len(m.Data) < copySize {
 		m.Data = make([]byte, copySize)
+	} else {
+		m.Data = m.Data[:copySize]
 	}
-	copy(m.Data, data[:copySize])
-	m.Data = m.Data[:copySize]
-	return copySize
+
+	// Copy bytes into the message, escaping slashes as we go
+	j := 0 // Count of original bytes copied (and index into data)
+	for i := 0; i < copySize && j < len(data); i++ {
+		if data[j] == '/' || data[j] == '\\' {
+			// Don't try to escape if we can't fit both the escape and the character
+			if i+1 >= copySize {
+				// Trim final byte, since we can't copy it
+				m.Data = m.Data[:i]
+				break
+			}
+			m.Data[i] = '\\'
+			i++
+		}
+		m.Data[i] = data[j]
+		j++
+	}
+
+	return j
 }
 
 func parseMessage(bs []byte) (*Msg, error) {
