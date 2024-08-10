@@ -42,9 +42,9 @@ type Session struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	// timeoutCh is a channel to signal to the Listener that the peer has timed out.
-	// Necessary so the Listener can reap the session from the session store.
-	timeoutCh chan *Session
+	// quitCh signals to the Listener that the Session is exiting, so Listener can reap it from the session store.
+	// This occurs when a peer times out, misbehaves, etc.
+	quitCh chan *Session
 
 	// receiveCh is a channel to receive messages from the listener
 	receiveCh chan *Msg
@@ -61,6 +61,9 @@ type Session struct {
 	// (Int32 works since ints must be smaller than 2147483648=2^31.)
 	lastAck atomic.Int32
 
+	// maxAckable is the maximum length we will accept an ack for.
+	maxAckable atomic.Int32
+
 	// writeBuffer is the session's data to be sent.
 	writeBuffer []byte
 }
@@ -72,7 +75,7 @@ func NewSession(addr net.Addr, id int, conn *net.UDPConn, pool *sync.Pool, timeo
 		ID:        id,
 		conn:      conn,
 		pool:      pool,
-		timeoutCh: timeoutCh,
+		quitCh:    timeoutCh,
 		receiveCh: make(chan *Msg, 1),
 		readCh:    make(chan bool, 1),
 		ctx:       ctx,
@@ -177,7 +180,7 @@ func (s *Session) readWorker() {
 		case <-timeoutTimer.C:
 			log.Printf(`no reply from session [%s]; alerting timeout`, s.Key())
 			// This is a unbuffered channel, but we're done so it's fine to just block here.
-			s.timeoutCh <- s
+			s.quitCh <- s
 			return
 		case msg := <-s.receiveCh:
 			// Reset session timeout
@@ -188,10 +191,21 @@ func (s *Session) readWorker() {
 
 			switch msg.Type {
 			case `ack`:
+				// If the ack'd length is greater than what we've sent, close the session.
+				maxAckable := int(s.maxAckable.Load())
+				if msg.Length > maxAckable {
+					log.Printf(`peer ack length [%d] greater than maxAckable [%d]; closing session %s`, msg.Length, maxAckable, s.Key())
+					sendClose(s.ID, s.Addr, s.conn)
+					s.Close()
+					s.quitCh <- s
+					return
+				}
+
 				// As long as ack'd length > session.lastAck, try to update session.lastAck
 				for {
-					if current := s.lastAck.Load(); msg.Length > int(current) {
-						if s.lastAck.CompareAndSwap(current, int32(msg.Length)) { // success
+					lastAck := s.lastAck.Load()
+					if msg.Length > int(lastAck) {
+						if s.lastAck.CompareAndSwap(lastAck, int32(msg.Length)) { // success
 							break
 						}
 					} else { // ack <= session.lastAck; ignore
@@ -269,6 +283,17 @@ func (s *Session) writeWorker() {
 		}
 		//TODO check sentN against buf length? Will this ever be unequal without error?
 		writeIndex += packedN
+		// Update maxAckable if we've sent more data than it.
+		for { // loop until we don't need to update
+			maxAckable := s.maxAckable.Load()
+			if writeIndex > int(maxAckable) {
+				if s.maxAckable.CompareAndSwap(maxAckable, int32(writeIndex)) { // success
+					break
+				}
+			} else { // ack <= session.lastAck; ignore
+				break
+			}
+		}
 	}
 
 	for {

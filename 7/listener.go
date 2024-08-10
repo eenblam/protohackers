@@ -11,8 +11,8 @@ type Listener struct {
 	conn *net.UDPConn
 	// acceptCh syncronizes Accept() with the listen() goroutine.
 	acceptCh chan *Session
-	// timeoutCh allows sessions to signal that their peer has timed out.
-	timeoutCh chan *Session
+	// quitCh allows Sessions to an indicate they can be safely reaped from the sessionStore.
+	quitCh chan *Session
 	// *Msg pool for incoming messages
 	pool *sync.Pool
 	// sessionStore is a map of session keys to sessions.
@@ -28,21 +28,21 @@ func Listen(laddr *net.UDPAddr) (*Listener, error) {
 	log.Printf(`listening on %s:%d`, laddr.IP, laddr.Port)
 
 	l := &Listener{
-		conn:      conn,
-		acceptCh:  make(chan *Session, 1),
-		timeoutCh: make(chan *Session),
-		pool:      &sync.Pool{New: func() any { return &Msg{} }},
+		conn:     conn,
+		acceptCh: make(chan *Session, 1),
+		quitCh:   make(chan *Session),
+		pool:     &sync.Pool{New: func() any { return &Msg{} }},
 	}
-	go l.handleTimeouts()
+	go l.reapSessions()
 	go l.listen()
 
 	return l, nil
 }
 
-func (l *Listener) handleTimeouts() {
+func (l *Listener) reapSessions() {
 	for {
-		session := <-l.timeoutCh
-		log.Printf(`session [%s] timed out`, session.Key())
+		session := <-l.quitCh
+		log.Printf(`Session[%s] has quit. Removing from session store.`, session.Key())
 		session.Close()
 		sendClose(session.ID, session.Addr, l.conn)
 		l.sessionStore.Delete(session.Key())
@@ -59,7 +59,7 @@ func (l *Listener) listen() {
 	for {
 		// Handle any timed-out sessions
 		select {
-		case session := <-l.timeoutCh:
+		case session := <-l.quitCh:
 			log.Printf(`session [%s] timed out`, session.Key())
 			session.Close()
 			sendClose(session.ID, session.Addr, l.conn)
@@ -91,7 +91,7 @@ func (l *Listener) listen() {
 			// Create pre-load to keep critical section as small as possible.
 			// (Alternative is a longer mutex lock to load, create, then store.
 			// The downside with current approach is creating a session for redundant CONNECTs.)
-			newSession := NewSession(addr, parsedMsg.Session, l.conn, l.pool, l.timeoutCh)
+			newSession := NewSession(addr, parsedMsg.Session, l.conn, l.pool, l.quitCh)
 			loadedSession, loaded := l.sessionStore.LoadOrStore(newSession.Key(), newSession)
 			if loaded {
 				// Existing session. Close the new one and proceed.
