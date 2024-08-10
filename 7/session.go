@@ -214,14 +214,19 @@ func (s *Session) readWorker() {
 				}
 			case `data`:
 				n, err := s.appendRead(msg.Pos, msg.Data)
+				// Always send an ack *of current length*, regardless of error.
+				s.sendAck(n)
 				if err != nil {
 					log.Printf(`error appending data to session %s: %s`, s.Key(), err)
+					continue
 				}
+				log.Printf(`DEBUG Session[%s] grew to [%d] bytes of data. Appended [%s][%x]`, s.Key(), n, msg.Data, msg.Data)
+				// Notify reader that data is available.
+				// readCh is 1-buffered. As long as *something* is queued, we can move on. No need to block.
 				select {
 				case s.readCh <- true:
 				default:
 				}
-				s.sendAck(n)
 			case `connect`, `close`:
 				log.Printf(`unexpected [%s] message forwarded to reader for session %s`, msg.Type, s.Key())
 			default:
@@ -310,6 +315,7 @@ func (s *Session) sendAck(length int) error {
 
 // sendData sends a data message to the session's peer.
 func (s *Session) sendData(packedData []byte) (int, error) {
+	log.Printf(`Session[%s] sending data: %s`, s.Key(), packedData)
 	n, _, err := s.conn.WriteMsgUDP(packedData, nil, s.Addr.(*net.UDPAddr))
 	//TODO do I anticipate an issue for n!=len(packedData)?
 	return n, err
