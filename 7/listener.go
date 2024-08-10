@@ -27,7 +27,7 @@ func Listen(laddr *net.UDPAddr) (*Listener, error) {
 
 	l := &Listener{
 		conn:      conn,
-		acceptCh:  make(chan *Session),
+		acceptCh:  make(chan *Session, 1),
 		timeoutCh: make(chan *Session),
 		pool:      &sync.Pool{New: func() any { return &Msg{} }},
 	}
@@ -80,19 +80,17 @@ func (l *Listener) listen() {
 			// Unrecognized session. Create a new session for CONNECT, otherwise just send a close.
 			if parsedMsg.Type == `connect` {
 				// Persist session
-				sessionStore[sessionKey] = NewSession(addr, parsedMsg.Session, l.conn, l.pool, l.timeoutCh)
-				// Send session to be Accept()'d. If this fails, close and drop the session.
+				session = NewSession(addr, parsedMsg.Session, l.conn, l.pool, l.timeoutCh)
+				// Send session to be Accept()'d. If this fails, just drop the connect and wait for another.
 				select {
-				case l.acceptCh <- sessionStore[sessionKey]:
+				case l.acceptCh <- session:
+					sessionStore[sessionKey] = session
 					// On success, send ACK
 					if err = sessionStore[sessionKey].sendAck(0); err != nil {
 						log.Printf(`error sending ack to %s: %s`, addr, err)
 					}
 				default:
-					log.Printf(`failed to accept session %s, sending close`, sessionKey)
-					session.Close()
-					sendClose(parsedMsg.Session, addr, l.conn)
-					delete(sessionStore, sessionKey)
+					log.Printf(`failed to accept session %s`, sessionKey)
 				}
 			} else {
 				log.Printf(`unrecognized session [%s]; sending close`, sessionKey)
