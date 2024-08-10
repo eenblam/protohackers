@@ -235,6 +235,12 @@ func TestParseMessage(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name:    "parse data with single byte",
+			in:      []byte(`/data/1234/10/a/`),
+			want:    &Msg{Type: "data", Session: 1234, Pos: 10, Data: []byte(`a`)},
+			wantErr: false,
+		},
+		{
 			name:    "parse data",
 			in:      []byte(`/data/1234/10/abc/`),
 			want:    &Msg{Type: "data", Session: 1234, Pos: 10, Data: []byte(`abc`)},
