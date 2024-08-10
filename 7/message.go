@@ -226,15 +226,17 @@ func parseData(bs []byte) ([]byte, error) {
 		return []byte{}, nil
 	}
 
-	if len(bs) == 1 {
-		if bs[0] == byte('\\') || bs[0] == byte('/') {
-			return nil, fmt.Errorf(`unescaped character "%c" in data "%s"`, bs[0], string(bs))
-		}
-		return bs, nil
-	}
-
 	// Unescape / and \ by populating a fresh array
 	out := make([]byte, len(bs))
+
+	if len(bs) == 1 {
+		if bs[0] == byte('\\') || bs[0] == byte('/') {
+			return nil, fmt.Errorf(`data is a single unescaped slash character [%s][%x]`, bs, bs)
+		}
+		copy(out, bs)
+		return out, nil
+	}
+
 	j := 0                           // Index into output
 	for i := 0; i < len(bs)-1; i++ { // Iterate up to next-to-last byte
 		this, next := bs[i], bs[i+1]
