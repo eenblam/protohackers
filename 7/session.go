@@ -189,9 +189,10 @@ func (s *Session) readWorker() {
 		case <-s.ctx.Done():
 			return
 		case <-timeoutTimer.C:
-			// Session has expired; close it.
-			//TODO need to message Listener
+			log.Printf(`no reply from session [%s]; alerting timeout`, s.Key())
+			// This is a unbuffered channel, but we're done so it's fine to just block here.
 			s.timeoutCh <- s
+			return
 		case msg := <-s.receiveCh:
 			// Reset session timeout
 			if !timeoutTimer.Stop() { // Must Stop timer and drain the channel before a Reset
@@ -215,6 +216,10 @@ func (s *Session) readWorker() {
 				n, err := s.appendRead(msg.Pos, msg.Data)
 				if err != nil {
 					log.Printf(`error appending data to session %s: %s`, s.Key(), err)
+				}
+				select {
+				case s.readCh <- true:
+				default:
 				}
 				s.sendAck(n)
 			case `connect`, `close`:
@@ -241,7 +246,7 @@ func (s *Session) writeWorker() {
 	// Just shove the buffer into the channel, and use a sync.Pool of buffers instead of a single shared buffer
 
 	// Reuse a single message for packing
-	msg := &Msg{Session: s.ID}
+	msg := &Msg{Type: `data`, Session: s.ID}
 	// Buffer for encoding messages
 	buf := make([]byte, maxMessageSize)
 
