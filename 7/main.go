@@ -25,6 +25,7 @@ func main() {
 	}
 	for {
 		session := l.Accept()
+		log.Printf(`accepted session [%s]`, session.Key())
 
 		go reverseSessionHandler(session)
 	}
@@ -33,18 +34,17 @@ func main() {
 func reverseSessionHandler(session *Session) {
 	scanner := bufio.NewScanner(session)
 	for scanner.Scan() {
-		if err := scanner.Err(); err != nil {
-			log.Printf(`Session[%s] error reading: %s`, session.Key(), err)
-			continue
-		}
 		data := scanner.Bytes()
-		log.Printf(`Session[%s] received message: %s`, session.Key(), data)
+		log.Printf(`Session[%s] received message: [%s]`, session.Key(), data)
 		slices.Reverse(data)
 		data = append(data, '\n')
 		_, err := session.Write(data)
 		if err != nil {
-			log.Printf(`error writing to session [%s]: %s`, session.Key(), err)
+			log.Printf(`error writing to session [%s]: [%s]`, session.Key(), err)
 		}
-		log.Printf(`Session[%s] sent message: %s`, session.Key(), data)
+		log.Printf(`Session[%s] sent message: [%s]`, session.Key(), data)
+	}
+	if err := scanner.Err(); err != nil {
+		log.Printf(`Session[%s] scanner exited with error: [%s]`, session.Key(), err)
 	}
 }
