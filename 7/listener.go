@@ -39,6 +39,7 @@ func Listen(laddr *net.UDPAddr) (*Listener, error) {
 	return l, nil
 }
 
+// reapSessions listens for sessions that have quit (for whatever reason) and removes them from the session store.
 func (l *Listener) reapSessions() {
 	for {
 		session := <-l.quitCh
@@ -49,24 +50,15 @@ func (l *Listener) reapSessions() {
 	}
 }
 
+// listen is the core read loop for all incoming packets, demux'ing them to their respective sessions
+// and creating new sessions as needed.
 func (l *Listener) listen() {
-	// Get a packet
-	// Parse a message (or don't)
+	// Get a packet; parse a message (or don't)
 	// New session: Create if CONNECT, otherwise send CLOSE.
 	// Not a new session: send ACK and DATA to session over buffered channel (send via select; just drop if buffer full)
 
 	buf := make([]byte, maxMessageSize)
 	for {
-		// Handle any timed-out sessions
-		select {
-		case session := <-l.quitCh:
-			log.Printf(`session [%s] timed out`, session.Key())
-			session.Close()
-			sendClose(session.ID, session.Addr, l.conn)
-			l.sessionStore.Delete(session.Key())
-		default:
-		}
-
 		// Read a packet
 		n, addr, err := l.conn.ReadFrom(buf)
 		if err != nil {
@@ -154,6 +146,7 @@ func (l *Listener) listen() {
 	}
 }
 
+// Accept blocks until a new Session is available, then returns it.
 func (l *Listener) Accept() *Session {
 	return <-l.acceptCh
 }
