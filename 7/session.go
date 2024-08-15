@@ -71,16 +71,15 @@ type Session struct {
 func NewSession(addr net.Addr, id int, conn *net.UDPConn, pool *sync.Pool, timeoutCh chan *Session) *Session {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Session{
-		Addr:      addr,
-		ID:        id,
-		conn:      conn,
-		pool:      pool,
-		quitCh:    timeoutCh,
-		receiveCh: make(chan *Msg, 1),
-		readCh:    make(chan bool, 1),
-		ctx:       ctx,
-		cancel:    cancel,
-		//TODO reconsider these default sizes
+		Addr:        addr,
+		ID:          id,
+		conn:        conn,
+		pool:        pool,
+		quitCh:      timeoutCh,
+		receiveCh:   make(chan *Msg, 1),
+		readCh:      make(chan bool, 1),
+		ctx:         ctx,
+		cancel:      cancel,
 		readBuffer:  make([]byte, 0, 1024),
 		writeBuffer: make([]byte, 0, 1024),
 	}
@@ -248,9 +247,6 @@ func (s *Session) writeWorker() {
 	// ticker: reset writeIndex to current lastAck
 	// default: send from current writeIndex, incrementing as we go.
 
-	// TODO: instead of a default, use another channel.
-	// Just shove the buffer into the channel, and use a sync.Pool of buffers instead of a single shared buffer
-
 	// Reuse a single message for packing
 	msg := &Msg{Type: `data`, Session: s.ID}
 	// Buffer for encoding messages
@@ -278,10 +274,11 @@ func (s *Session) writeWorker() {
 		}
 		_, err = s.sendData(buf[:encodedN])
 		if err != nil {
+			// For now, we ignore the number of bytes sent on error,
+			// since we can always resend them anyway if we bail out here.
 			log.Printf(`error sending data message: %s`, err)
 			return
 		}
-		//TODO check sentN against buf length? Will this ever be unequal without error?
 		writeIndex += packedN
 		// Update maxAckable if we've sent more data than it.
 		for { // loop until we don't need to update
@@ -306,6 +303,8 @@ func (s *Session) writeWorker() {
 			writeIndex = int(s.lastAck.Load())
 			continue
 		default:
+			// Room for improvement: instead of a default case, use another channel here to avoid spinning through tryWrite.
+			// Just shove the buffer into the channel, and use a sync.Pool of buffers instead of a single shared buffer
 			tryWrite()
 		}
 	}
@@ -332,7 +331,6 @@ func (s *Session) sendAck(length int) error {
 func (s *Session) sendData(packedData []byte) (int, error) {
 	log.Printf(`Session[%s] sending data: %s`, s.Key(), packedData)
 	n, _, err := s.conn.WriteMsgUDP(packedData, nil, s.Addr.(*net.UDPAddr))
-	//TODO do I anticipate an issue for n!=len(packedData)?
 	return n, err
 
 }
