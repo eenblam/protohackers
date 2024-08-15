@@ -177,7 +177,7 @@ func (s *Session) readWorker() {
 		case <-s.ctx.Done():
 			return
 		case <-timeoutTimer.C:
-			log.Printf(`no reply from session [%s]; alerting timeout`, s.Key())
+			log.Printf(`Sesssion[%s].readWorker: no reply from peer; alerting timeout`, s.Key())
 			// This is a unbuffered channel, but we're done so it's fine to just block here.
 			s.quitCh <- s
 			return
@@ -193,7 +193,7 @@ func (s *Session) readWorker() {
 				// If the ack'd length is greater than what we've sent, close the session.
 				maxAckable := int(s.maxAckable.Load())
 				if msg.Length > maxAckable {
-					log.Printf(`peer ack length [%d] greater than maxAckable [%d]; closing session %s`, msg.Length, maxAckable, s.Key())
+					log.Printf(`Session[%s].readWorker: peer ack length [%d] greater than maxAckable [%d]; closing session`, s.Key(), msg.Length, maxAckable)
 					sendClose(s.ID, s.Addr, s.conn)
 					s.Close()
 					s.quitCh <- s
@@ -212,15 +212,13 @@ func (s *Session) readWorker() {
 					}
 				}
 			case `data`:
-				log.Printf(`DEBUG appending data to session: [%s][%x]`, msg.Data, msg.Data)
 				n, err := s.appendRead(msg.Pos, msg.Data)
 				// Always send an ack *of current length*, regardless of error.
 				s.sendAck(n)
 				if err != nil {
-					log.Printf(`error appending data to session %s: %s`, s.Key(), err)
+					log.Printf(`Session[%s].readWorker: error appending data: %s`, s.Key(), err)
 					continue
 				}
-				log.Printf(`DEBUG Session[%s] grew to [%d] bytes of data. Appended [%s][%x]`, s.Key(), n, msg.Data, msg.Data)
 				// Notify reader that data is available.
 				// readCh is 1-buffered. As long as *something* is queued, we can move on. No need to block.
 				select {
@@ -228,9 +226,9 @@ func (s *Session) readWorker() {
 				default:
 				}
 			case `connect`, `close`:
-				log.Printf(`unexpected [%s] message forwarded to reader for session %s`, msg.Type, s.Key())
+				log.Printf(`Session[%s].readWorker: unexpected [%s] message forwarded to reader `, s.Key(), msg.Type)
 			default:
-				log.Printf(`unexpected message type %s for session %s`, msg.Type, s.Key())
+				log.Printf(`Session[%s].readWorker: unexpected message type [%s]`, s.Key(), msg.Type)
 			}
 			s.pool.Put(msg)
 		}
@@ -264,19 +262,19 @@ func (s *Session) writeWorker() {
 		msg.Pos = writeIndex
 		packedN := msg.pack(s.writeBuffer[writeIndex:])
 		if err := msg.Validate(); err != nil {
-			log.Printf(`error validating message [%v+]: %s`, msg, err)
+			log.Printf(`Session[%s].writeWorker: error validating message [%v+]: %s`, s.Key(), msg, err)
 			return
 		}
 		encodedN, err := msg.encode(buf)
 		if err != nil {
-			log.Printf(`error encoding message: %s`, err)
+			log.Printf(`Session[%s].writeWorker: error encoding message: %s`, s.Key(), err)
 			return
 		}
 		_, err = s.sendData(buf[:encodedN])
 		if err != nil {
 			// For now, we ignore the number of bytes sent on error,
 			// since we can always resend them anyway if we bail out here.
-			log.Printf(`error sending data message: %s`, err)
+			log.Printf(`Session[%s].writeWorker: error sending data message: %s`, s.Key(), err)
 			return
 		}
 		writeIndex += packedN

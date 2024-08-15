@@ -43,7 +43,7 @@ func Listen(laddr *net.UDPAddr) (*Listener, error) {
 func (l *Listener) reapSessions() {
 	for {
 		session := <-l.quitCh
-		log.Printf(`Session[%s] has quit. Removing from session store.`, session.Key())
+		log.Printf(`Listener: Session[%s] has quit. Removing from session store.`, session.Key())
 		session.Close()
 		sendClose(session.ID, session.Addr, l.conn)
 		l.sessionStore.Delete(session.Key())
@@ -62,16 +62,17 @@ func (l *Listener) listen() {
 		// Read a packet
 		n, addr, err := l.conn.ReadFrom(buf)
 		if err != nil {
-			log.Fatalf(`error reading from %s: %s`, addr, err)
+			log.Printf(`Listener: error reading from %s: %s`, addr, err)
+			continue
 		}
 		rawMsg := buf[:n]
-		log.Printf(`got %d bytes from %s: [%s]`, n, addr.String(), string(rawMsg))
+		log.Printf(`Listener: got %d bytes from %s: [%s]`, n, addr.String(), string(rawMsg))
 
 		// Parse a message; pull from pool since we'd otherwise be allocating a lot of these.
 		parsedMsg := l.pool.Get().(*Msg)
 		if err = parseMessageInto(parsedMsg, rawMsg); err != nil {
 			// Just drop invalid messages
-			log.Printf(`error parsing message: %s`, err)
+			log.Printf(`Listener: error parsing message: [%s]`, err)
 			continue
 		}
 
@@ -94,9 +95,9 @@ func (l *Listener) listen() {
 				session = newSession
 				select {
 				case l.acceptCh <- session:
-					log.Printf(`listener accepted session [%s]`, session.Key())
+					log.Printf(`Listener: accepted session [%s]`, session.Key())
 				default:
-					log.Printf(`listener failed to accept session [%s]`, session.Key())
+					log.Printf(`Listener: failed to accept session [%s]`, session.Key())
 					// Close session and remove from store.
 					// Don't ack since we dropped. Don't *send* a CLOSE so peer can retry.
 					session.Close()
@@ -106,7 +107,7 @@ func (l *Listener) listen() {
 			}
 			// Regardless, nothing more to do here but send an ACK. If this fails, they can always retry the CONNECT.
 			if err = session.sendAck(0); err != nil {
-				log.Printf(`error sending ack to %s: %s`, addr, err)
+				log.Printf(`Listener: error sending ack to %s: %s`, addr, err)
 			}
 			continue
 		} else {
@@ -120,11 +121,11 @@ func (l *Listener) listen() {
 		}
 		switch parsedMsg.Type {
 		case `connect`:
-			log.Printf(`unexpected handling of connect message for session [%s]; this should be unreachable`, session.Key())
+			log.Printf(`Listener: unexpected handling of connect message for session [%s]; this should be unreachable`, session.Key())
 			continue
 		case `close`:
 			// Close session and remove from store.
-			log.Printf(`peer disconnect; closing session [%s]`, session.Key())
+			log.Printf(`Listener: peer disconnect; closing session [%s]`, session.Key())
 			session.Close()
 			sendClose(parsedMsg.Session, addr, l.conn)
 			l.sessionStore.Delete(session.Key())
@@ -136,12 +137,12 @@ func (l *Listener) listen() {
 			case session.receiveCh <- parsedMsg:
 			default:
 				// Do nothing; just drop the packet.
-				log.Printf(`dropped packet for session %s`, session.Key())
+				log.Printf(`Listener: dropped packet for session %s`, session.Key())
 				l.pool.Put(parsedMsg)
 			}
 			continue
 		default:
-			log.Printf(`unexpected packet type [%s] for session [%s]`, parsedMsg.Type, session.Key())
+			log.Printf(`Listener: unexpected packet type [%s] for session [%s]`, parsedMsg.Type, session.Key())
 		}
 	}
 }
