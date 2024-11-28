@@ -4,7 +4,8 @@ These are my solutions to [protohackers](https://protohackers.com/),
 a series of network programming challenges.
 Currently, they're all written in Go with no external dependencies.
 
-Most solutions come with automated tests that can be run with `go test .`. 
+Ultimately, these solutions are tested more rigorously against the actual Protohackers server,
+but most include some local tests that can be run with `go test .`.
 See README.md of each solution for details.
 
 ## Deploying
