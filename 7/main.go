@@ -31,6 +31,8 @@ func main() {
 	}
 }
 
+// reverseSessionHandler implements the application layer by simply reading until a new line
+// and then responding with a reversed copy of each line.
 func reverseSessionHandler(session *Session) {
 	scanner := bufio.NewScanner(session)
 	for scanner.Scan() {
