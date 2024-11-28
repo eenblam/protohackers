@@ -314,7 +314,7 @@ func (s *Session) writeWorker() {
 // (Unclear if *any* ack is fine in that case, but docs specify to send 0.)
 func (s *Session) sendAck(length int) error {
 	// Send UDP ack message to Addr
-	msg := []byte(fmt.Sprintf(`/ack/%d/%d/`, s.ID, len(s.readBuffer)))
+	msg := []byte(fmt.Sprintf(`/ack/%d/%d/`, s.ID, length))
 	n, _, err := s.conn.WriteMsgUDP(msg, nil, s.Addr.(*net.UDPAddr))
 	if err != nil {
 		return fmt.Errorf("error sending ack message: %s", err)
