@@ -59,6 +59,7 @@ type Session struct {
 	// lastAck is the length that was last acknowledged by the peer.
 	// atomic.Int32 used to allow lock-free access and modification.
 	// (Int32 works since ints must be smaller than 2147483648=2^31.)
+	// Since this is signed, -1 indicates a client awaiting an ack (0) of its connect message.
 	lastAck atomic.Int32
 
 	// maxAckable is the maximum length we will accept an ack for.
@@ -66,23 +67,52 @@ type Session struct {
 
 	// writeBuffer is the session's data to be sent.
 	writeBuffer []byte
+
+	// isClient distinguishes server and client sessions
+	isClient bool
 }
 
-func NewSession(addr net.Addr, id int, conn *net.UDPConn, pool *sync.Pool, timeoutCh chan *Session) *Session {
+// newServerSession instantiates the state needed to handle an LRCP session and kicks off read and write workers.
+func newServerSession(addr net.Addr, id int, conn *net.UDPConn, pool *sync.Pool, quitCh chan *Session) *Session {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Session{
 		Addr:        addr,
 		ID:          id,
 		conn:        conn,
 		pool:        pool,
-		quitCh:      timeoutCh,
+		quitCh:      quitCh,
 		receiveCh:   make(chan *Msg, 1),
 		readCh:      make(chan bool, 1),
 		ctx:         ctx,
 		cancel:      cancel,
 		readBuffer:  make([]byte, 0, 1024),
 		writeBuffer: make([]byte, 0, 1024),
+		isClient:    false,
 	}
+	go s.readWorker()
+	go s.writeWorker()
+	return s
+}
+
+// newClientSession instantiates the state needed to handle an LRCP session and kicks off read and write workers.
+func newClientSession(addr net.Addr, id int, conn *net.UDPConn, pool *sync.Pool, quitCh chan *Session) *Session {
+	ctx, cancel := context.WithCancel(context.Background())
+	s := &Session{
+		Addr:        addr,
+		ID:          id,
+		conn:        conn,
+		pool:        pool,
+		quitCh:      quitCh,
+		receiveCh:   make(chan *Msg, 1),
+		readCh:      make(chan bool, 1),
+		ctx:         ctx,
+		cancel:      cancel,
+		readBuffer:  make([]byte, 0, 1024),
+		writeBuffer: make([]byte, 0, 1024),
+		isClient:    true,
+	}
+	// We're still waiting for ack 0 while attempting to connect
+	s.lastAck.Store(-1)
 	go s.readWorker()
 	go s.writeWorker()
 	return s
@@ -166,6 +196,8 @@ func (s *Session) Write(b []byte) (int, error) {
 
 // Close current session.
 func (s *Session) Close() {
+	// For clients, we don't remove id from ClientId here,
+	// since we want to only do it once, but this method should be idempotent.
 	s.cancel()
 }
 
@@ -177,7 +209,7 @@ func (s *Session) readWorker() {
 		case <-s.ctx.Done():
 			return
 		case <-timeoutTimer.C:
-			log.Printf(`Sesssion[%s].readWorker: no reply from peer; alerting timeout`, s.Key())
+			log.Printf(`Session[%s].readWorker: no reply from peer; alerting timeout`, s.Key())
 			// This is a unbuffered channel, but we're done so it's fine to just block here.
 			s.quitCh <- s
 			return
@@ -237,7 +269,7 @@ func (s *Session) readWorker() {
 
 // writeWorker is a per-session goroutine that sends data from the session's writeBuffer.
 func (s *Session) writeWorker() {
-	ticker := time.NewTicker(RetransmissionTimeout)
+	retransmissionTicker := time.NewTicker(RetransmissionTimeout)
 	writeIndex := 0
 
 	// Select on a time.Ticker for N seconds, close channel, or default
@@ -262,7 +294,7 @@ func (s *Session) writeWorker() {
 		msg.Pos = writeIndex
 		packedN := msg.pack(s.writeBuffer[writeIndex:])
 		if err := msg.Validate(); err != nil {
-			log.Printf(`Session[%s].writeWorker: error validating message [%v+]: %s`, s.Key(), msg, err)
+			log.Printf(`Session[%s].writeWorker: error validating message [%+v]: %s`, s.Key(), msg, err)
 			return
 		}
 		encodedN, err := msg.encode(buf)
@@ -296,9 +328,14 @@ func (s *Session) writeWorker() {
 		case <-s.ctx.Done():
 			log.Printf(`Session[%s].writeWorker closed`, s.Key())
 			return
-		case <-ticker.C:
+		case <-retransmissionTicker.C:
 			// Reset writeIndex to lastAck
 			writeIndex = int(s.lastAck.Load())
+			// If we're a client and have never been ack'd, resend initial connect
+			if writeIndex < 0 {
+				err := s.sendConnect()
+				log.Printf(`Session[%s].writeWorker failed to resend connect: %v`, s.Key(), err)
+			}
 			continue
 		default:
 			// Room for improvement: instead of a default case, use another channel here to avoid spinning through tryWrite.
@@ -313,9 +350,15 @@ func (s *Session) writeWorker() {
 // For example, we should always respond to a duplicate connect with /ack/SESSION/0/
 // (Unclear if *any* ack is fine in that case, but docs specify to send 0.)
 func (s *Session) sendAck(length int) error {
+	// Send nil addr for client session, since UDP conn is already connected
+	var addr *net.UDPAddr
+	if !s.isClient {
+		addr = s.Addr.(*net.UDPAddr)
+	}
+
 	// Send UDP ack message to Addr
 	msg := []byte(fmt.Sprintf(`/ack/%d/%d/`, s.ID, length))
-	n, _, err := s.conn.WriteMsgUDP(msg, nil, s.Addr.(*net.UDPAddr))
+	n, _, err := s.conn.WriteMsgUDP(msg, nil, addr)
 	if err != nil {
 		return fmt.Errorf("error sending ack message: %s", err)
 	}
@@ -325,12 +368,57 @@ func (s *Session) sendAck(length int) error {
 	return nil
 }
 
+// sendConnect
+func (s *Session) sendConnect() error {
+	// Send nil addr for client session, since UDP conn is already connected
+	var addr *net.UDPAddr
+	if !s.isClient {
+		addr = s.Addr.(*net.UDPAddr)
+	}
+
+	msg := []byte(fmt.Sprintf(`/connect/%d/`, s.ID))
+	n, _, err := s.conn.WriteMsgUDP(msg, nil, addr)
+	if err != nil {
+		return fmt.Errorf("error sending connect message: %s", err)
+	}
+	if n != len(msg) {
+		return fmt.Errorf("short write sending connect message: %d != %d", n, len(msg))
+	}
+	return nil
+
+}
+
 // sendData sends a data message to the session's peer.
 func (s *Session) sendData(packedData []byte) (int, error) {
-	log.Printf(`Session[%s] sending data: %s`, s.Key(), packedData)
-	n, _, err := s.conn.WriteMsgUDP(packedData, nil, s.Addr.(*net.UDPAddr))
-	return n, err
+	// Send nil addr for client session, since UDP conn is already connected
+	var addr *net.UDPAddr
+	if !s.isClient {
+		addr = s.Addr.(*net.UDPAddr)
+	}
 
+	log.Printf(`Session[%s] sending data: %s`, s.Key(), packedData)
+	n, _, err := s.conn.WriteMsgUDP(packedData, nil, addr)
+	return n, err
+}
+
+// sendClose sends a close message for sessionID.
+// This will fail if the conn has already
+func (s *Session) sendClose() error {
+	// Send nil addr for client session, since UDP conn is already connected
+	var addr *net.UDPAddr
+	if !s.isClient {
+		addr = s.Addr.(*net.UDPAddr)
+	}
+
+	msg := []byte(fmt.Sprintf(`/close/%d/`, s.ID))
+	n, _, err := s.conn.WriteMsgUDP(msg, nil, addr)
+	if err != nil {
+		return fmt.Errorf("error sending close message: %s", err)
+	}
+	if n != len(msg) {
+		return fmt.Errorf("short write sending close message: %d != %d", n, len(msg))
+	}
+	return nil
 }
 
 // sendClose sends a close message for sessionID.
@@ -347,4 +435,71 @@ func sendClose(sessionID int, addr net.Addr, conn *net.UDPConn) error {
 		return fmt.Errorf("short write sending close message: %d != %d", n, len(msg))
 	}
 	return nil
+}
+
+// listenClient is the core listen loop for a client-only session, since it isn't
+// being managed by a server Listener.
+func (s *Session) listenClient() {
+	buf := make([]byte, maxMessageSize)
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		default:
+		}
+
+		// Read a packet
+		n, addr, err := s.conn.ReadFrom(buf)
+		if err != nil {
+			log.Printf(`Session[%s].listenClient: error reading from %s: %v`, s.Key(), addr.String(), err)
+		}
+		rawMsg := buf[:n]
+		log.Printf(`Session[%s].listenClient: got %d bytes from %s: [%s]`, s.Key(), n, addr.String(), string(rawMsg))
+
+		// Parse a message; pull from pool since we'd otherwise be allocating a lot of these.
+		parsedMsg := s.pool.Get().(*Msg)
+		if err = parseMessageInto(parsedMsg, rawMsg); err != nil {
+			// Just drop invalid messages
+			log.Printf(`Session[%s].listenClient: error parsing message: [%v]`, s.Key(), err)
+			continue
+		}
+		if parsedMsg.Session != s.ID {
+			log.Printf(`Session[%s].listenClient: got [%s] for session [%d], expected [%d]`, s.Key(), parsedMsg.Type, parsedMsg.Session, s.ID)
+			s.Close()
+			return
+		}
+
+		switch parsedMsg.Type {
+		case `connect`:
+			// For now, we aren't supporting 1-1 connections, so just close.
+			log.Printf(`Session[%d].listenClient: unexpected connect from server`, s.ID)
+			sendClose(s.ID, s.Addr, s.conn)
+			s.Close()
+		case `close`:
+			log.Printf(`Session[%d].listenClient: peer disconnect; closing`, s.ID)
+			// Send a Close msg if we *haven't* already closed ourselves
+			select {
+			case <-s.ctx.Done():
+				return
+			default:
+			}
+			sendClose(s.ID, s.Addr, s.conn)
+			s.Close()
+		case `ack`, `data`:
+			// Forward ACK and DATA to session.
+			// Don't acknowledge DATA yet, since we may drop packets here.
+			select {
+			case s.receiveCh <- parsedMsg:
+			default:
+				// Do nothing; just drop the packet.
+				log.Printf(`Session[%s].listenClient: dropped packet`, s.Key())
+				s.pool.Put(parsedMsg)
+			}
+			continue
+
+		default:
+			log.Printf(`Session[%s].listenClient: unexpected packet type [%s]`, s.Key(), parsedMsg.Type)
+		}
+
+	}
 }

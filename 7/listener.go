@@ -20,7 +20,7 @@ type Listener struct {
 }
 
 func Listen(laddr *net.UDPAddr) (*Listener, error) {
-	// Connect or die
+	// Listen or die
 	conn, err := net.ListenUDP("udp", laddr)
 	if err != nil {
 		return nil, fmt.Errorf(`error listening on %s:%d: %s`, localAddr, localPort, err)
@@ -62,7 +62,7 @@ func (l *Listener) listen() {
 		// Read a packet
 		n, addr, err := l.conn.ReadFrom(buf)
 		if err != nil {
-			log.Printf(`Listener: error reading from %s: %s`, addr, err)
+			log.Printf(`Listener: error reading from %s: %s`, addr.String(), err)
 			continue
 		}
 		rawMsg := buf[:n]
@@ -84,7 +84,7 @@ func (l *Listener) listen() {
 			// Create pre-load to keep critical section as small as possible.
 			// (Alternative is a longer mutex lock to load, create, then store.
 			// The downside with current approach is creating a session for redundant CONNECTs.)
-			newSession := NewSession(addr, parsedMsg.Session, l.conn, l.pool, l.quitCh)
+			newSession := newServerSession(addr, parsedMsg.Session, l.conn, l.pool, l.quitCh)
 			loadedSession, loaded := l.sessionStore.LoadOrStore(newSession.Key(), newSession)
 			if loaded {
 				// Existing session. Close the new one and proceed.

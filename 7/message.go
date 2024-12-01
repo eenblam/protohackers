@@ -103,7 +103,9 @@ func (m *Msg) pack(data []byte) int {
 	}
 
 	// Copy bytes into the message, escaping slashes as we go
-	j := 0 // Count of original bytes copied (and index into data)
+	// j counts original bytes copied (and indexes into data)
+	j := 0
+	// i counts bytes written, including escape characters
 	for i := 0; i < copySize && j < len(data); i++ {
 		if data[j] == '/' || data[j] == '\\' {
 			// Don't try to escape if we can't fit both the escape and the character
