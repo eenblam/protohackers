@@ -24,11 +24,16 @@ func TestMain(t *testing.T) {
 		Want  []byte
 	}{
 		{
-			Name: "Foo",
+			Name: "Simple test",
 			// Use "" (interpreted literal) not `` (raw literal) here for proper newlines
 			// (otherwise we have to literally create a linebreak)
-			Input: []byte("asdf\nqwer\n"),
-			Want:  []byte("fdsa\nrewq\n"),
+			Input: []byte("asdf\nqwer\n\n"),
+			Want:  []byte("fdsa\nrewq\n\n"),
+		},
+		{
+			Name:  "Test escapes",
+			Input: []byte("asdf\\nqwer\n"),
+			Want:  []byte("rewqn\\fdsa\n"),
 		},
 	}
 
