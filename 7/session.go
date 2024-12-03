@@ -449,7 +449,6 @@ func (s *Session) listenClient() {
 		}
 
 		// Read a packet
-		//n, addr, err := s.conn.ReadFrom(buf)
 		n, err := s.conn.Read(buf)
 		if err != nil {
 			log.Printf(`Session[%s].listenClient: error reading: %v`, s.Key(), err)
