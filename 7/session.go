@@ -14,7 +14,7 @@ import (
 // How long to wait before retransmitting unacknowledged data messages.
 // "retransmission timeout: the time to wait before retransmitting a message.
 // Suggested default value: 3 seconds."
-const RetransmissionTimeout = 3 * time.Second
+const RetransmissionTimeout = 500 * time.Millisecond
 
 // How long to wait for a new message before timing out.
 // "session expiry timeout: the time to wait before accepting that a peer has disappeared,
