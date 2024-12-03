@@ -174,8 +174,19 @@ func TestParseData(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name:    "parse consecutive escaped slashes",
+			in:      []byte(`d\\\\\/a\/ta`),
+			want:    []byte(`d\\/a/ta`),
+			wantErr: false,
+		},
+		{
 			name:    "error on unescaped slash",
 			in:      []byte(`da/ta`),
+			wantErr: true,
+		},
+		{
+			name:    "error on uneven escaping",
+			in:      []byte(`da\\\ta`),
 			wantErr: true,
 		},
 		{
