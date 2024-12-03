@@ -220,18 +220,31 @@ func parseMessageInto(parsedMsg *Msg, bs []byte) error {
 // parseField will scan to the next unescaped /, returning the parsed field and any remaining bytes after the /.
 // Returns an error if no unescaped slash is found, as all messages must end with a /.
 func parseField(bs []byte) ([]byte, []byte, error) {
+	// Track if a previous backslash \ was escaped
+	// Don't track if forward slash escaped - /\ shouldn't escape the /, but // should
+	escape := false
 	var i int
 	for i = 0; i < len(bs); i++ {
-		if bs[i] != byte('/') {
+		if escape { // Previous byte was an unescaped \
+			escape = false // Next byte can't be escaped if this one was
+			if bs[i] == byte('\\') || bs[i] == byte('/') {
+				continue
+			}
+			// Else error
+			return nil, nil, fmt.Errorf("previous byte was \\, but this byte [%x] is unescapable", bs[i])
+		}
+		if bs[i] == byte('\\') {
+			escape = true
 			continue
 		}
-		if i != 0 && bs[i-1] == byte('\\') { // This slash was escaped
-			continue
+		if bs[i] == byte('/') { // Unescaped /
+			break
 		}
-		break
+		// Otherwise just continue
 	}
+	// If we got to the end with no /, error.
 	if i == len(bs) {
-		return nil, nil, fmt.Errorf("no / found in input %s", string(bs))
+		return nil, nil, fmt.Errorf("no / found in input [%x]", bs)
 	}
 	before, after := bs[:i], bs[i+1:]
 	return before, after, nil

@@ -21,10 +21,10 @@ func TestParseField(t *testing.T) {
 		},
 		{
 			name:     "parse an empty field",
-			in:       []byte{},
-			want:     []byte{},
-			wantRest: []byte{},
-			wantErr:  true,
+			in:       []byte(`/`),
+			want:     []byte(``),
+			wantRest: []byte(``),
+			wantErr:  false,
 		},
 		{
 			name:     "parse a single field",
@@ -46,6 +46,35 @@ func TestParseField(t *testing.T) {
 			want:     []byte(`fie\/ld\\1`),
 			wantRest: []byte(`field2/`),
 			wantErr:  false,
+		},
+		{
+			name:     "escaped backslash doesn't escape subsequent slash",
+			in:       []byte(`field\\/rest/`),
+			want:     []byte(`field\\`),
+			wantRest: []byte(`rest/`),
+			wantErr:  false,
+		},
+		{
+			name:     "escaped backslash doesn't escape final slash", // funny edge case
+			in:       []byte(`field\\/`),
+			want:     []byte(`field\\`),
+			wantRest: []byte(``),
+			wantErr:  false,
+		},
+		{
+			name:    "error on non-escape backslash",
+			in:      []byte(`fie\ld/rest/`),
+			wantErr: true,
+		},
+		{
+			name:    "error on non-terminated field", // (missing /)
+			in:      []byte(`field`),
+			wantErr: true,
+		},
+		{
+			name:    "error when only slash is escaped",
+			in:      []byte(`field\/`),
+			wantErr: true,
 		},
 	}
 	for _, c := range cases {
