@@ -140,6 +140,7 @@ func (s *Session) Read(b []byte) (int, error) {
 		defer s.readLock.Unlock()
 	}
 	if s.readIndex >= int64(len(s.readBuffer)) {
+		// A read was signaled, but there's nothing to copy out
 		return 0, nil
 	}
 	n := copy(b, s.readBuffer[s.readIndex:])
@@ -258,7 +259,7 @@ func (s *Session) readWorker() {
 				default:
 				}
 			case `connect`, `close`:
-				log.Printf(`Session[%s].readWorker: unexpected [%s] message forwarded to reader `, s.Key(), msg.Type)
+				log.Printf(`Session[%s].readWorker: unexpected [%s] message forwarded to reader`, s.Key(), msg.Type)
 			default:
 				log.Printf(`Session[%s].readWorker: unexpected message type [%s]`, s.Key(), msg.Type)
 			}
@@ -317,7 +318,7 @@ func (s *Session) writeWorker() {
 				if s.maxAckable.CompareAndSwap(maxAckable, int32(writeIndex)) { // success
 					break
 				}
-			} else { // ack <= session.lastAck; ignore
+			} else { // writeIndex <= maxAckable; ignore
 				break
 			}
 		}
@@ -360,10 +361,10 @@ func (s *Session) sendAck(length int) error {
 	msg := []byte(fmt.Sprintf(`/ack/%d/%d/`, s.ID, length))
 	n, _, err := s.conn.WriteMsgUDP(msg, nil, addr)
 	if err != nil {
-		return fmt.Errorf("error sending ack message: %s", err)
+		return fmt.Errorf("Session[%s].sendAck: error sending ack message: %s", s.Key(), err)
 	}
 	if n != len(msg) {
-		return fmt.Errorf("short write sending ack message: %d != %d", n, len(msg))
+		return fmt.Errorf("Session[%s].sendAck: short write sending ack message: %d != %d", s.Key(), n, len(msg))
 	}
 	return nil
 }
@@ -379,10 +380,10 @@ func (s *Session) sendConnect() error {
 	msg := []byte(fmt.Sprintf(`/connect/%d/`, s.ID))
 	n, _, err := s.conn.WriteMsgUDP(msg, nil, addr)
 	if err != nil {
-		return fmt.Errorf("error sending connect message: %s", err)
+		return fmt.Errorf("Session[%s].sendConnect: error sending connect message: %s", s.Key(), err)
 	}
 	if n != len(msg) {
-		return fmt.Errorf("short write sending connect message: %d != %d", n, len(msg))
+		return fmt.Errorf("Session[%s].sendConnect: short write sending connect message: %d != %d", s.Key(), n, len(msg))
 	}
 	return nil
 
@@ -396,13 +397,12 @@ func (s *Session) sendData(packedData []byte) (int, error) {
 		addr = s.Addr.(*net.UDPAddr)
 	}
 
-	log.Printf(`Session[%s] sending data: %s`, s.Key(), packedData)
+	log.Printf(`Session[%s].sendData: sending [%d] bytes`, s.Key(), len(packedData))
 	n, _, err := s.conn.WriteMsgUDP(packedData, nil, addr)
 	return n, err
 }
 
 // sendClose sends a close message for sessionID.
-// This will fail if the conn has already
 func (s *Session) sendClose() error {
 	// Send nil addr for client session, since UDP conn is already connected
 	var addr *net.UDPAddr
@@ -413,10 +413,10 @@ func (s *Session) sendClose() error {
 	msg := []byte(fmt.Sprintf(`/close/%d/`, s.ID))
 	n, _, err := s.conn.WriteMsgUDP(msg, nil, addr)
 	if err != nil {
-		return fmt.Errorf("error sending close message: %s", err)
+		return fmt.Errorf("Session[%s].sendClose: error sending close message: %s", s.Key(), err)
 	}
 	if n != len(msg) {
-		return fmt.Errorf("short write sending close message: %d != %d", n, len(msg))
+		return fmt.Errorf("Session[%s].sendClose: short write sending close message: %d != %d", s.Key(), n, len(msg))
 	}
 	return nil
 }
@@ -429,10 +429,10 @@ func sendClose(sessionID int, addr net.Addr, conn *net.UDPConn) error {
 	msg := []byte(fmt.Sprintf(`/close/%d/`, sessionID))
 	n, _, err := conn.WriteMsgUDP(msg, nil, addr.(*net.UDPAddr))
 	if err != nil {
-		return fmt.Errorf("error sending close message: %s", err)
+		return fmt.Errorf("sendClose: error sending close message for session [%d]: %s", sessionID, err)
 	}
 	if n != len(msg) {
-		return fmt.Errorf("short write sending close message: %d != %d", n, len(msg))
+		return fmt.Errorf("sendClose: short write sending close message for session [%d]: %d != %d", sessionID, n, len(msg))
 	}
 	return nil
 }
@@ -449,12 +449,14 @@ func (s *Session) listenClient() {
 		}
 
 		// Read a packet
-		n, addr, err := s.conn.ReadFrom(buf)
+		//n, addr, err := s.conn.ReadFrom(buf)
+		n, err := s.conn.Read(buf)
 		if err != nil {
-			log.Printf(`Session[%s].listenClient: error reading from %s: %v`, s.Key(), addr.String(), err)
+			log.Printf(`Session[%s].listenClient: error reading: %v`, s.Key(), err)
+			continue
 		}
 		rawMsg := buf[:n]
-		log.Printf(`Session[%s].listenClient: got %d bytes from %s: [%s]`, s.Key(), n, addr.String(), string(rawMsg))
+		log.Printf(`Session[%s].listenClient: got %d bytes: [%s]`, s.Key(), n, string(rawMsg))
 
 		// Parse a message; pull from pool since we'd otherwise be allocating a lot of these.
 		parsedMsg := s.pool.Get().(*Msg)
