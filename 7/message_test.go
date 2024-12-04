@@ -62,6 +62,13 @@ func TestParseField(t *testing.T) {
 			wantErr:  false,
 		},
 		{
+			name:     "newline before end of field is fine", // funny edge case
+			in:       []byte("field\\\\\\/\n/"),
+			want:     []byte("field\\\\\\/\n"),
+			wantRest: []byte(``),
+			wantErr:  false,
+		},
+		{
 			name:    "error on non-escape backslash",
 			in:      []byte(`fie\ld/rest/`),
 			wantErr: true,
@@ -177,6 +184,12 @@ func TestParseData(t *testing.T) {
 			name:    "parse consecutive escaped slashes",
 			in:      []byte(`d\\\\\/a\/ta`),
 			want:    []byte(`d\\/a/ta`),
+			wantErr: false,
+		},
+		{
+			name:    "parse final newline",
+			in:      []byte("d\\\\\\/a\\/ta\n"),
+			want:    []byte("d\\/a/ta\n"),
 			wantErr: false,
 		},
 		{
@@ -486,7 +499,7 @@ func TestPack(t *testing.T) {
 			name: "greatest possible metadata size",
 			// Max out the lengths of string(session) and string(pos); this is the largest metadata a /data/ packet can have.
 			session: maxInt,
-			// pack doesn't care if we're writing beyond beyond maximal protocol capacity, that's for Validate() to decide.
+			// pack doesn't care if we're writing beyond maximal protocol capacity, that's for Validate() to decide.
 			// (I.e. it's fine if *sending* this message would mean sending too many bytes.)
 			pos:      maxInt,
 			data:     aaa(maxMessageSize),
