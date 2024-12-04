@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"strconv"
@@ -223,31 +224,24 @@ func parseField(bs []byte) ([]byte, []byte, error) {
 	// Track if a previous backslash \ was escaped
 	// Don't track if forward slash escaped - /\ shouldn't escape the /, but // should
 	escape := false
-	var i int
-	for i = 0; i < len(bs); i++ {
+	for i := range bs {
 		if escape { // Previous byte was an unescaped \
 			escape = false // Next byte can't be escaped if this one was
-			if bs[i] == byte('\\') || bs[i] == byte('/') {
+			if bs[i] == '\\' || bs[i] == '/' {
 				continue
 			}
 			// Else error
 			return nil, nil, fmt.Errorf("previous byte was \\, but this byte [%x] is unescapable", bs[i])
 		}
-		if bs[i] == byte('\\') {
+		if bs[i] == '\\' {
 			escape = true
 			continue
 		}
-		if bs[i] == byte('/') { // Unescaped /
-			break
+		if bs[i] == '/' { // Unescaped /
+			return bs[:i], bs[i+1:], nil
 		}
-		// Otherwise just continue
 	}
-	// If we got to the end with no /, error.
-	if i == len(bs) {
-		return nil, nil, fmt.Errorf("no / found in input [%x]", bs)
-	}
-	before, after := bs[:i], bs[i+1:]
-	return before, after, nil
+	return nil, nil, fmt.Errorf("no / found in input [%x]", bs)
 }
 
 // parseInt parses a field to an int
@@ -264,44 +258,33 @@ func parseInt(bs []byte) (int, error) {
 
 // parseData parses a Data field, unescaping any forward or backward slashes
 func parseData(bs []byte) ([]byte, error) {
-	if len(bs) == 0 {
-		return []byte{}, nil
+	// Just return a copy if no slashes found
+	for i := range bs {
+		if bs[i] == '\\' || bs[i] == '/' {
+			goto ESCAPED
+		}
 	}
+	return bytes.Clone(bs), nil
 
+ESCAPED:
 	// Unescape / and \ by populating a fresh array
-	out := make([]byte, len(bs))
+	out := make([]byte, 0, len(bs))
 
-	if len(bs) == 1 {
-		if bs[0] == byte('\\') || bs[0] == byte('/') {
-			return nil, fmt.Errorf(`data is a single unescaped slash character [%s][%x]`, bs, bs)
+	var escape bool
+	for i := range bs {
+		switch {
+		case bs[i] == '\\' && escape, bs[i] == '/' && escape:
+			escape = false
+			out = append(out, bs[i])
+		case bs[i] == '\\' && !escape:
+			escape = true
+		case bs[i] == '/' && !escape:
+			return nil, fmt.Errorf("unescaped forward slash at index [%d]", i)
+		case escape:
+			return nil, fmt.Errorf("illegally escaped byte [%x] at index [%d]", bs[i], i)
+		default:
+			out = append(out, bs[i])
 		}
-		copy(out, bs)
-		return out, nil
 	}
-
-	j := 0                           // Index into output
-	for i := 0; i < len(bs)-1; i++ { // Iterate up to next-to-last byte
-		this, next := bs[i], bs[i+1]
-		// Catch escaped slashes
-		if this == byte('\\') && (next == byte('/') || next == byte('\\')) {
-			out[j] = next
-			i++ // skip next
-		} else if this == byte('\\') || this == byte('/') {
-			// This isn't an escaping backslash, and escaped slashes are handled above, so error.
-			return nil, fmt.Errorf(`unescaped character "%c" at position %d in data "%s"`, this, i, string(bs))
-		} else if i == len(bs)-2 {
-			// This is the last step, so we need to handle the last byte
-			if next == byte('\\') || next == byte('/') {
-				// This isn't an escaping backslash, and escaped slashes are handled above, so error.
-				return nil, fmt.Errorf(`unescaped character "%c" at position %d in data "%s"`, next, i+1, string(bs))
-			}
-			out[j] = this
-			out[j+1] = next
-		} else {
-			out[j] = this
-		}
-		// We want to increment this even on the last step to get our final bound correct
-		j++
-	}
-	return out[:j+1], nil
+	return out, nil
 }
