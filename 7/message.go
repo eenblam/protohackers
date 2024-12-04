@@ -15,7 +15,7 @@ import (
 */
 
 // "Numeric field values must be smaller than 2147483648."
-const maxInt = 2147483647
+const maxInt = 2147483647 // 2**31 - 1
 
 // "LRCP messages must be smaller than 1000 bytes.
 // You might have to break up data into multiple data

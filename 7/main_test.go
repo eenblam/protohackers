@@ -200,8 +200,7 @@ func TestBadLink(t *testing.T) {
 
 	log.Println(`TestBadLink: receiving and checking results`)
 	scanner = bufio.NewScanner(session)
-	buf := make([]byte, maxInt)
-	scanner.Buffer(buf, maxInt)
+	scanner.Buffer(make([]byte, 65536), maxInt)
 	scanner.Split(ScanLinesNoCR)
 	var want []byte
 	for i := 0; i < len(lines) && scanner.Scan(); i++ {

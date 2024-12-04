@@ -38,9 +38,9 @@ func reverseSessionHandler(session *Session) {
 	defer session.Close()
 
 	scanner := bufio.NewScanner(session)
-	// Default token size is 64k; we might receive maxInt bytes before newline
-	buf := make([]byte, maxInt)
-	scanner.Buffer(buf, maxInt)
+	// Default token size is 64k, but we might receive maxInt bytes before newline.
+	// Start with 2^16, allow growth to maxInt.
+	scanner.Buffer(make([]byte, 65536), maxInt)
 	scanner.Split(ScanLinesNoCR)
 
 	for scanner.Scan() {
