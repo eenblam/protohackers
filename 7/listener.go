@@ -97,7 +97,7 @@ func (l *Listener) listen() {
 				}
 			}
 			// Regardless, nothing more to do here but send an ACK. If this fails, they can always retry the CONNECT.
-			if err = session.sendAck(0); err != nil {
+			if err = session.SendAck(0); err != nil {
 				log.Printf(`Listener: error sending ack to [%s]: %s`, addr, err)
 			}
 			continue
@@ -105,7 +105,7 @@ func (l *Listener) listen() {
 			// Not a connect. Try to load. Continue on failure.
 			loadedSession, loaded := l.sessionStore.Load(fmt.Sprintf("%s-%d", addr, parsedMsg.Session))
 			if !loaded {
-				sendClose(parsedMsg.Session, addr, l.conn)
+				SendClose(parsedMsg.Session, addr, l.conn)
 				continue
 			}
 			session = loadedSession.(*Session)
@@ -117,7 +117,7 @@ func (l *Listener) listen() {
 			// Close session and remove from store.
 			log.Printf(`Listener: peer disconnect; closing session [%s]`, session.Key())
 			session.Close()
-			sendClose(parsedMsg.Session, addr, l.conn)
+			SendClose(parsedMsg.Session, addr, l.conn)
 			l.sessionStore.Delete(session.Key())
 		case `ack`, `data`:
 			// Send ACK and DATA to session.

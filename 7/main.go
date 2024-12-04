@@ -51,7 +51,7 @@ func reverseSessionHandler(session *Session) {
 		_, err := session.Write(data)
 		if err != nil {
 			log.Printf(`Reverse: Session[%s] encountered error on write: %s`, session.Key(), err)
-			session.sendClose()
+			session.SendClose()
 			break
 		}
 		log.Printf(`Reverse: Session[%s] sent [%d] bytes`, session.Key(), len(data))

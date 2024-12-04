@@ -27,7 +27,7 @@ func DialLRCP(network string, laddr, raddr *net.UDPAddr) (*Session, error) {
 		coordinator.cleanup)
 	go coordinator.listen(session)
 	// Send initial connect before making session available for use
-	err = session.sendConnect()
+	err = session.SendConnect()
 	if err != nil {
 		return nil, fmt.Errorf("error sending connect message on dial: %v", err)
 	}

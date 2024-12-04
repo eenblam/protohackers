@@ -225,7 +225,7 @@ func (s *Session) Close() {
 	default:
 		// This needs to be inside the select.
 		s.cancel()
-		s.sendClose()
+		s.SendClose()
 		// cleanup must be last since we can't sendClose if the UDPConn is cleaned up.
 		s.cleanup(s)
 	}
@@ -277,7 +277,7 @@ func (s *Session) readWorker() {
 			case `data`:
 				n, err := s.appendRead(msg.Pos, msg.Data)
 				// Always send an ack *of current length*, regardless of error.
-				s.sendAck(n)
+				s.SendAck(n)
 				if err != nil {
 					log.Printf(`Session[%s].readWorker: error appending data: %s`, s.Key(), err)
 					continue
@@ -351,7 +351,7 @@ func (s *Session) writeWorker() {
 		}
 		log.Printf(`Session[%s].writeWorker: sending [%d]-byte message with [%d]-packed bytes from write index [%d]`,
 			s.Key(), encodedN, packedN, writeIndex)
-		_, err = s.sendData(buf[:encodedN])
+		_, err = s.SendData(buf[:encodedN])
 		if err != nil {
 			// For now, we ignore the number of bytes sent on error,
 			// since we can always resend them anyway if we bail out here.
@@ -382,7 +382,7 @@ func (s *Session) writeWorker() {
 			writeIndex = int(s.lastAck.Load())
 			// If we're a client and have never been ack'd, resend initial connect
 			if writeIndex < 0 {
-				err := s.sendConnect()
+				err := s.SendConnect()
 				log.Printf(`Session[%s].writeWorker failed to resend connect: %v`, s.Key(), err)
 			}
 			continue
@@ -394,12 +394,12 @@ func (s *Session) writeWorker() {
 	}
 }
 
-// sendAck sends an acknowledgement of a given session length.
+// SendAck sends an acknowledgement of a given session length.
 // The session's current length isn't strictly used, since we sometimes need to
 // send something else.
 // For example, we should always respond to a duplicate connect with /ack/SESSION/0/
 // (Unclear if *any* ack is fine in that case, but docs specify to send 0.)
-func (s *Session) sendAck(length int) error {
+func (s *Session) SendAck(length int) error {
 	// Send nil addr for client session, since UDP conn is already connected
 	var addr *net.UDPAddr
 	if !s.isClient {
@@ -418,8 +418,8 @@ func (s *Session) sendAck(length int) error {
 	return nil
 }
 
-// sendConnect
-func (s *Session) sendConnect() error {
+// SendConnect
+func (s *Session) SendConnect() error {
 	// Send nil addr for client session, since UDP conn is already connected
 	var addr *net.UDPAddr
 	if !s.isClient {
@@ -438,8 +438,8 @@ func (s *Session) sendConnect() error {
 
 }
 
-// sendData sends a data message to the session's peer.
-func (s *Session) sendData(packedData []byte) (int, error) {
+// SendData sends a data message to the session's peer.
+func (s *Session) SendData(packedData []byte) (int, error) {
 	// Send nil addr for client session, since UDP conn is already connected
 	var addr *net.UDPAddr
 	if !s.isClient {
@@ -451,8 +451,8 @@ func (s *Session) sendData(packedData []byte) (int, error) {
 	return n, err
 }
 
-// sendClose sends a close message for sessionID.
-func (s *Session) sendClose() error {
+// SendClose sends a close message for sessionID.
+func (s *Session) SendClose() error {
 	// Send nil addr for client session, since UDP conn is already connected
 	var addr *net.UDPAddr
 	if !s.isClient {
@@ -470,10 +470,10 @@ func (s *Session) sendClose() error {
 	return nil
 }
 
-// sendClose sends a close message for sessionID.
+// SendClose sends a close message for sessionID.
 // This isn't defined on Session since we may want to close a non-existent session.
 // See Session.Close for closing an existing session.
-func sendClose(sessionID int, addr net.Addr, conn *net.UDPConn) error {
+func SendClose(sessionID int, addr net.Addr, conn *net.UDPConn) error {
 	// Send UDP close message to Addr
 	msg := []byte(fmt.Sprintf(`/close/%d/`, sessionID))
 	n, _, err := conn.WriteMsgUDP(msg, nil, addr.(*net.UDPAddr))
