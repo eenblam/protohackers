@@ -286,5 +286,9 @@ ESCAPED:
 			out = append(out, bs[i])
 		}
 	}
+	if escape {
+		// We encountered an unescaped \ at the end, then set escape.
+		return nil, fmt.Errorf("unescaped backslash at final byte index [%d]", len(bs)-1)
+	}
 	return out, nil
 }
