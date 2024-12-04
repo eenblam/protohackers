@@ -44,7 +44,6 @@ func reverseSessionHandler(session *Session) {
 	scanner.Split(ScanLinesNoCR)
 
 	for scanner.Scan() {
-		log.Println("SCAN")
 		data := scanner.Bytes()
 		log.Printf(`Reverse: Session[%s] received [%d] bytes`, session.Key(), len(data))
 		slices.Reverse(data)
