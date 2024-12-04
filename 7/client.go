@@ -24,7 +24,6 @@ func DialLRCP(network string, laddr, raddr *net.UDPAddr) (*Session, error) {
 	session := newClientSession(raddr,
 		coordinator.getClientId(conn),
 		conn,
-		coordinator.pool,
 		coordinator.quitCh)
 	go session.listenClient()
 	// Send initial connect before making session available for use

@@ -127,95 +127,91 @@ func (m *Msg) pack(data []byte) int {
 
 func parseMessage(bs []byte) (*Msg, error) {
 	msg := &Msg{}
-	return msg, parseMessageInto(msg, bs)
-}
-
-func parseMessageInto(parsedMsg *Msg, bs []byte) error {
 	if len(bs) == 0 {
-		return errors.New("empty message")
+		return nil, errors.New("empty message")
 	}
 	if bs[0] != byte('/') {
-		return errors.New("missing leading /")
+		return nil, errors.New("missing leading /")
 	}
 
 	// Parse type
 	t, rest, err := parseField(bs[1:]) // Skip leading /
 	if err != nil {
-		return fmt.Errorf("error parsing type: %w", err)
+		return nil, fmt.Errorf("error parsing type: %w", err)
 	}
-	parsedMsg.Type = string(t)
-	if !(parsedMsg.Type == "connect" || parsedMsg.Type == "data" || parsedMsg.Type == "ack" || parsedMsg.Type == "close") {
-		return fmt.Errorf(`unknown type "%s"`, parsedMsg.Type)
+	msg.Type = string(t)
+	if !(msg.Type == "connect" || msg.Type == "data" || msg.Type == "ack" || msg.Type == "close") {
+		return nil, fmt.Errorf(`unknown type "%s"`, msg.Type)
 	}
 
 	// Parse session
 	session, rest, err := parseField(rest)
 	if err != nil {
-		return fmt.Errorf("error parsing session: %w", err)
+		return nil, fmt.Errorf("error parsing session: %w", err)
 	}
 	sessionInt, err := parseInt(session)
 	if err != nil {
-		return fmt.Errorf("error parsing session int: %w", err)
+		return nil, fmt.Errorf("error parsing session int: %w", err)
 	}
-	parsedMsg.Session = sessionInt
+	msg.Session = sessionInt
 
-	switch string(parsedMsg.Type) {
+	switch string(msg.Type) {
 	case "connect":
 		// /connect/SESSION/
 		if len(rest) != 0 {
-			return fmt.Errorf("extra data after Session on Connect: %s", rest)
+			return nil, fmt.Errorf("extra data after Session on Connect: %s", rest)
 		}
-		return nil
+		return msg, nil
 	case "data":
 		// /data/SESSION/POS/DATA/
 		// Parse Pos
 		rawPos, rest, err := parseField(rest)
 		if err != nil {
-			return fmt.Errorf("error parsing Pos field: %w", err)
+			return nil, fmt.Errorf("error parsing Pos field: %w", err)
 		}
 		parsedPos, err := parseInt(rawPos)
 		if err != nil {
-			return fmt.Errorf("error parsing Pos value: %w", err)
+			return nil, fmt.Errorf("error parsing Pos value: %w", err)
 		}
-		parsedMsg.Pos = parsedPos
+		msg.Pos = parsedPos
 		// Parse Data
 		rawData, rest, err := parseField(rest)
 		if err != nil {
-			return fmt.Errorf("error parsing Data field: %w", err)
+			return nil, fmt.Errorf("error parsing Data field: %w", err)
 		}
 		if len(rest) != 0 {
-			return fmt.Errorf("extra data after Data field: %s", rest)
+			return nil, fmt.Errorf("extra data after Data field: %s", rest)
 		}
 		parsedData, err := parseData(rawData)
 		if err != nil {
-			return fmt.Errorf("error parsing Data value: %w", err)
+			return nil, fmt.Errorf("error parsing Data value: %w", err)
 		}
-		parsedMsg.Data = parsedData
-		return nil
+		msg.Data = parsedData
+		return msg, nil
 	case "ack":
 		// /ack/SESSION/LENGTH/
 		rawLength, rest, err := parseField(rest)
 		if err != nil {
-			return fmt.Errorf("error parsing Pos field: %w", err)
+			return nil, fmt.Errorf("error parsing Pos field: %w", err)
 		}
 		if len(rest) != 0 {
-			return fmt.Errorf("extra data after Length field: %s", rest)
+			return nil, fmt.Errorf("extra data after Length field: %s", rest)
 		}
 		parsedLength, err := parseInt(rawLength)
 		if err != nil {
-			return fmt.Errorf("error parsing Length value: %w", err)
+			return nil, fmt.Errorf("error parsing Length value: %w", err)
 		}
-		parsedMsg.Length = parsedLength
-		return nil
+		msg.Length = parsedLength
+		return msg, nil
 	case "close":
 		// /close/SESSION/
 		if len(rest) != 0 {
-			return fmt.Errorf("extra data after Session on Close: %s", rest)
+			return nil, fmt.Errorf("extra data after Session on Close: %s", rest)
 		}
-		return nil
+		return msg, nil
 	default:
 	}
-	return fmt.Errorf(`unknown type "%s"`, t)
+	return nil, fmt.Errorf(`unknown type "%s"`, t)
 }
 
 // parseField will scan to the next unescaped /, returning the parsed field and any remaining bytes after the /.

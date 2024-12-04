@@ -18,8 +18,6 @@ type Listener struct {
 	acceptCh chan *Session
 	// quitCh allows Sessions to an indicate they can be safely reaped from the sessionStore.
 	quitCh chan *Session
-	// *Msg pool for incoming messages
-	pool *sync.Pool
 	// sessionStore is a map of session keys to sessions.
 	sessionStore sync.Map
 }
@@ -35,7 +33,6 @@ func Listen(laddr *net.UDPAddr) (*Listener, error) {
 		conn:     conn,
 		acceptCh: make(chan *Session, acceptBufferSize),
 		quitCh:   make(chan *Session),
-		pool:     &sync.Pool{New: func() any { return &Msg{} }},
 	}
 	go l.reapSessions()
 	go l.listen()
@@ -73,8 +70,8 @@ func (l *Listener) listen() {
 		log.Printf(`Listener: got [%d] bytes from [%s]`, n, addr.String())
 
 		// Parse a message; pull from pool since we'd otherwise be allocating a lot of these.
-		parsedMsg := l.pool.Get().(*Msg)
-		if err = parseMessageInto(parsedMsg, rawMsg); err != nil {
+		parsedMsg, err := parseMessage(rawMsg)
+		if err != nil {
 			// Just drop invalid messages
 			log.Printf(`Listener: error parsing message: [%s]`, err)
 			continue
@@ -88,7 +85,7 @@ func (l *Listener) listen() {
 			// Create pre-load to keep critical section as small as possible.
 			// (Alternative is a longer mutex lock to load, create, then store.
 			// The downside with current approach is creating a session for redundant CONNECTs.)
-			newSession := newServerSession(addr, parsedMsg.Session, l.conn, l.pool, l.quitCh)
+			newSession := newServerSession(addr, parsedMsg.Session, l.conn, l.quitCh)
 			loadedSession, loaded := l.sessionStore.LoadOrStore(newSession.Key(), newSession)
 			if loaded {
 				// Existing session. Close the new one and proceed.
@@ -142,7 +139,6 @@ func (l *Listener) listen() {
 			default:
 				// Do nothing; just drop the packet.
 				log.Printf(`Listener: dropped packet for session [%s]`, session.Key())
-				l.pool.Put(parsedMsg)
 			}
 			continue
 		default:

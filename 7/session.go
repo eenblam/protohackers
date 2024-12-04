@@ -35,8 +35,6 @@ type Session struct {
 	// The UDP connection to send messages on.
 	// Incoming messages are de-muxed by the listener.
 	conn *net.UDPConn
-	// Message pool for re-use.
-	pool *sync.Pool
 
 	// Context for closing the session.
 	ctx    context.Context
@@ -73,13 +71,12 @@ type Session struct {
 }
 
 // newServerSession instantiates the state needed to handle an LRCP session and kicks off read and write workers.
-func newServerSession(addr net.Addr, id int, conn *net.UDPConn, pool *sync.Pool, quitCh chan *Session) *Session {
+func newServerSession(addr net.Addr, id int, conn *net.UDPConn, quitCh chan *Session) *Session {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Session{
 		Addr:        addr,
 		ID:          id,
 		conn:        conn,
-		pool:        pool,
 		quitCh:      quitCh,
 		receiveCh:   make(chan *Msg, 1),
 		readCh:      make(chan bool, 1),
@@ -95,13 +92,12 @@ func newServerSession(addr net.Addr, id int, conn *net.UDPConn, pool *sync.Pool,
 }
 
 // newClientSession instantiates the state needed to handle an LRCP session and kicks off read and write workers.
-func newClientSession(addr net.Addr, id int, conn *net.UDPConn, pool *sync.Pool, quitCh chan *Session) *Session {
+func newClientSession(addr net.Addr, id int, conn *net.UDPConn, quitCh chan *Session) *Session {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Session{
 		Addr:        addr,
 		ID:          id,
 		conn:        conn,
-		pool:        pool,
 		quitCh:      quitCh,
 		receiveCh:   make(chan *Msg, 1),
 		readCh:      make(chan bool, 1),
@@ -264,7 +260,6 @@ func (s *Session) readWorker() {
 			default:
 				log.Printf(`Session[%s].readWorker: unexpected message type [%s]`, s.Key(), msg.Type)
 			}
-			s.pool.Put(msg)
 		}
 	}
 }
@@ -463,8 +458,8 @@ func (s *Session) listenClient() {
 		log.Printf(`Session[%s].listenClient: got %d bytes`, s.Key(), n)
 
 		// Parse a message; pull from pool since we'd otherwise be allocating a lot of these.
-		parsedMsg := s.pool.Get().(*Msg)
-		if err = parseMessageInto(parsedMsg, rawMsg); err != nil {
+		parsedMsg, err := parseMessage(rawMsg)
+		if err != nil {
 			// Just drop invalid messages
 			log.Printf(`Session[%s].listenClient: error parsing message: [%v]`, s.Key(), err)
 			continue
@@ -500,7 +495,6 @@ func (s *Session) listenClient() {
 			default:
 				// Do nothing; just drop the packet.
 				log.Printf(`Session[%s].listenClient: dropped packet`, s.Key())
-				s.pool.Put(parsedMsg)
 			}
 			continue
 
