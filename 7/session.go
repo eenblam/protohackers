@@ -169,9 +169,10 @@ func (s *Session) appendRead(pos int, b []byte) (int, error) {
 	if pos != len(s.readBuffer) {
 		return len(s.readBuffer), fmt.Errorf("position %d != current data length %d", pos, len(s.readBuffer))
 	}
-	if total := pos + len(s.readBuffer); total > maxInt {
+	if total := pos + len(b); total > maxInt {
 		return len(s.readBuffer), fmt.Errorf("total data length %d exceeds max transmission size %d", total, maxInt)
 	}
+	log.Printf("Session[%s].appendRead: appending %d-bytes at pos %d for total %d", s.Key(), len(b), pos, pos+len(b))
 	s.readBuffer = append(s.readBuffer, b...)
 	return len(s.readBuffer), nil
 }
@@ -285,6 +286,8 @@ func (s *Session) writeWorker() {
 
 	// Wrapping this in a function for easy defer semantics.
 	tryWrite := func() {
+		buf = buf[:cap(buf)] // Re-extend for full length writes
+
 		s.writeLock.Lock()
 		defer s.writeLock.Unlock()
 		if writeIndex >= len(s.writeBuffer) {
@@ -303,6 +306,8 @@ func (s *Session) writeWorker() {
 			log.Printf(`Session[%s].writeWorker: error encoding message: %s`, s.Key(), err)
 			return
 		}
+		log.Printf(`Session[%s].writeWorker: sending [%d]-byte message with [%d]-packed bytes from write index [%d]`,
+			s.Key(), encodedN, packedN, writeIndex)
 		_, err = s.sendData(buf[:encodedN])
 		if err != nil {
 			// For now, we ignore the number of bytes sent on error,
@@ -455,7 +460,7 @@ func (s *Session) listenClient() {
 			continue
 		}
 		rawMsg := buf[:n]
-		log.Printf(`Session[%s].listenClient: got %d bytes: [%s]`, s.Key(), n, string(rawMsg))
+		log.Printf(`Session[%s].listenClient: got %d bytes`, s.Key(), n)
 
 		// Parse a message; pull from pool since we'd otherwise be allocating a lot of these.
 		parsedMsg := s.pool.Get().(*Msg)
@@ -469,6 +474,7 @@ func (s *Session) listenClient() {
 			s.Close()
 			return
 		}
+		log.Printf(`Session[%s].listenClient: got %d bytes of type [%s]`, s.Key(), n, parsedMsg.Type)
 
 		switch parsedMsg.Type {
 		case `connect`:
