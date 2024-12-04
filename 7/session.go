@@ -22,6 +22,17 @@ const RetransmissionTimeout = 500 * time.Millisecond
 // in the event that no responses are being received. Suggested default value: 60 seconds."
 const ReadTimeout = 60 * time.Second
 
+// Size of Session's receive buffer. Tuned to the rates at which Listener.listen
+// can process incoming packets and Session.readWorker can process a Msg.
+// Running TestBadLink with only 1% failure rate (near-full throughput):
+// 1 => ~8s
+// 16 => ~0.5-1.5s
+// At 25% failure:
+// 1 => ~16s
+// 16 => ~7s
+// I didn't test super rigorously yet, but it seemed to fall off around there on my machine.
+const ReceiveBufferSize = 16
+
 type Session struct {
 	// Synchronizes Session.Read and Session.readWorker
 	readLock sync.Mutex
@@ -80,7 +91,7 @@ func newServerSession(addr net.Addr, id int, conn *net.UDPConn, cleanup func(s *
 		ID:          id,
 		conn:        conn,
 		cleanup:     cleanup,
-		receiveCh:   make(chan *Msg, 1),
+		receiveCh:   make(chan *Msg, ReceiveBufferSize),
 		readCh:      make(chan bool, 1),
 		ctx:         ctx,
 		cancel:      cancel,
@@ -101,7 +112,7 @@ func newClientSession(addr net.Addr, id int, conn *net.UDPConn, cleanup func(s *
 		ID:          id,
 		conn:        conn,
 		cleanup:     cleanup,
-		receiveCh:   make(chan *Msg, 1),
+		receiveCh:   make(chan *Msg, ReceiveBufferSize),
 		readCh:      make(chan bool, 1),
 		ctx:         ctx,
 		cancel:      cancel,
@@ -373,6 +384,7 @@ func (s *Session) writeWorker() {
 	}
 
 	for {
+		// Room for improvement: this spins a bit. Could signal from Write instead of using a default case.
 		select {
 		case <-s.ctx.Done():
 			log.Printf(`Session[%s].writeWorker closed`, s.Key())
@@ -383,13 +395,18 @@ func (s *Session) writeWorker() {
 			// If we're a client and have never been ack'd, resend initial connect
 			if writeIndex < 0 {
 				err := s.SendConnect()
-				log.Printf(`Session[%s].writeWorker failed to resend connect: %v`, s.Key(), err)
+				if err != nil {
+					log.Printf(`Session[%s].writeWorker failed to resend connect: %v`, s.Key(), err)
+				}
 			}
 			continue
 		default:
 			// Room for improvement: instead of a default case, use another channel here to avoid spinning through tryWrite.
 			// Just shove the buffer into the channel, and use a sync.Pool of buffers instead of a single shared buffer
-			tryWrite()
+			// Note: this solution means that we don't try to eagerly send data before our connect is ACK'd.
+			if writeIndex >= 0 { // -1 until we get initial ack
+				tryWrite()
+			}
 		}
 	}
 }
@@ -418,7 +435,7 @@ func (s *Session) SendAck(length int) error {
 	return nil
 }
 
-// SendConnect
+// SendConnect sends a connect message to the session's peer.
 func (s *Session) SendConnect() error {
 	// Send nil addr for client session, since UDP conn is already connected
 	var addr *net.UDPAddr
@@ -470,7 +487,7 @@ func (s *Session) SendClose() error {
 	return nil
 }
 
-// SendClose sends a close message for sessionID.
+// SendClose sends a close message for the given sessionID.
 // This isn't defined on Session since we may want to close a non-existent session.
 // See Session.Close for closing an existing session.
 func SendClose(sessionID int, addr net.Addr, conn *net.UDPConn) error {
