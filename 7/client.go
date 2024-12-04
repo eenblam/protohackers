@@ -19,6 +19,7 @@ func DialLRCP(network string, laddr, raddr *net.UDPAddr) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
+	log.Printf("DialLRCP: dialed [%s], listening on [%s]", raddr.String(), conn.LocalAddr().String())
 	coordinator := getClientCoordinator()
 	session := newClientSession(raddr,
 		coordinator.getClientId(conn),
