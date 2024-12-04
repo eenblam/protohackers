@@ -24,7 +24,7 @@ func DialLRCP(network string, laddr, raddr *net.UDPAddr) (*Session, error) {
 	session := newClientSession(raddr,
 		coordinator.getClientId(conn),
 		conn,
-		coordinator.quitCh)
+		coordinator.cleanup)
 	go session.listenClient()
 	// Send initial connect before making session available for use
 	err = session.sendConnect()
@@ -37,36 +37,28 @@ func DialLRCP(network string, laddr, raddr *net.UDPAddr) (*Session, error) {
 func getClientCoordinator() *ClientCoordinator {
 	if Coordinator == nil {
 		Coordinator = &ClientCoordinator{
-			quitCh:       make(chan *Session, 1),
 			pool:         &sync.Pool{New: func() any { return &Msg{} }},
 			sessionStore: sync.Map{},
 		}
-		go Coordinator.reapSessions()
 	}
 	return Coordinator
 }
 
 type ClientCoordinator struct {
-	// quitCh allows Sessions to indicate they can be safely reaped from the clientSessionStore.
-	quitCh chan *Session
 	// *Msg pool for incoming messages
 	pool *sync.Pool
 	// sessionStore is a map of session keys to Sessions.
 	sessionStore sync.Map
 }
 
-// reapSessions listens for sessions that have quit (for whatever reason) and removes them from the session store.
-func (c *ClientCoordinator) reapSessions() {
-	for {
-		session := <-c.quitCh
-		log.Printf(`Coordinator.reapSessions: Session[%s] has quit. Removing from client session store.`, session.Key())
-		session.Close()
-		session.sendClose()
-		c.sessionStore.Delete(session.ID)
-		err := session.conn.Close()
-		if err != nil {
-			log.Printf(`Coordinator.reapSessions: error closing Session[%s]`, session.Key())
-		}
+// cleanup is a callback for sessions that have quit (for whatever reason).
+func (c *ClientCoordinator) cleanup(session *Session) {
+	log.Printf(`Coordinator.reapSessions: Session[%s] has quit. Removing from client session store.`, session.Key())
+	c.sessionStore.Delete(session.ID)
+	// Unlike Sessions spawned by a Listener, these each have their own underlying net.UDPConn.
+	err := session.conn.Close()
+	if err != nil {
+		log.Printf(`Coordinator.reapSessions: error closing Session[%s]`, session.Key())
 	}
 }
 

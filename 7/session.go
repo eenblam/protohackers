@@ -26,6 +26,8 @@ type Session struct {
 	readLock sync.Mutex
 	// Synchronizes Session.Write and Session.writeWorker
 	writeLock sync.Mutex
+	// Eliminates a race condition on Close
+	closeLock sync.Mutex
 
 	// The peer's address.
 	Addr net.Addr
@@ -40,9 +42,8 @@ type Session struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	// quitCh signals to the Listener that the Session is exiting, so Listener can reap it from the session store.
-	// This occurs when a peer times out, misbehaves, etc.
-	quitCh chan *Session
+	// cleanup is a callback function for the session to call when closed.
+	cleanup func(s *Session)
 
 	// receiveCh is a channel to receive messages from the listener
 	receiveCh chan *Msg
@@ -71,13 +72,13 @@ type Session struct {
 }
 
 // newServerSession instantiates the state needed to handle an LRCP session and kicks off read and write workers.
-func newServerSession(addr net.Addr, id int, conn *net.UDPConn, quitCh chan *Session) *Session {
+func newServerSession(addr net.Addr, id int, conn *net.UDPConn, cleanup func(s *Session)) *Session {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Session{
 		Addr:        addr,
 		ID:          id,
 		conn:        conn,
-		quitCh:      quitCh,
+		cleanup:     cleanup,
 		receiveCh:   make(chan *Msg, 1),
 		readCh:      make(chan bool, 1),
 		ctx:         ctx,
@@ -92,13 +93,13 @@ func newServerSession(addr net.Addr, id int, conn *net.UDPConn, quitCh chan *Ses
 }
 
 // newClientSession instantiates the state needed to handle an LRCP session and kicks off read and write workers.
-func newClientSession(addr net.Addr, id int, conn *net.UDPConn, quitCh chan *Session) *Session {
+func newClientSession(addr net.Addr, id int, conn *net.UDPConn, cleanup func(s *Session)) *Session {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Session{
 		Addr:        addr,
 		ID:          id,
 		conn:        conn,
-		quitCh:      quitCh,
+		cleanup:     cleanup,
 		receiveCh:   make(chan *Msg, 1),
 		readCh:      make(chan bool, 1),
 		ctx:         ctx,
@@ -192,13 +193,47 @@ func (s *Session) Write(b []byte) (int, error) {
 	return len(b), nil
 }
 
-// Close current session.
-func (s *Session) Close() {
-	// For clients, we don't remove id from ClientId here,
-	// since we want to only do it once, but this method should be idempotent.
+// Abort closes a Session's goroutines without notifying its peer or cleaning
+// up resources (see Session.Close().) Useful when a Session has been spawned
+// but should be discarded before use.
+func (s *Session) Abort() {
+	// Don't compete for Close lock. That race condition is actually acceptable
+	// here; if the Session internally decides to Close, we shouldn't try to
+	// prevent that by acquiring the lock first.
 	s.cancel()
 }
 
+// Close current session. Can be safely called multiple times.
+// Signals other goroutines to close, informs peer of disconnect, and signals
+// Listener to reap this session.
+//
+// A few things are handled by s.cleanup that shouldn't be handled here, since
+// they vary by client and server implementation.
+// * Removing the session from the session store
+// * Closing the session's connection (server shares one conn, clients get their own)
+func (s *Session) Close() {
+
+	// Needed for a race condition: it's possible for two calls to Close to enter the default
+	// case before one completes a call to s.cancel().
+	s.closeLock.Lock()
+	defer s.closeLock.Unlock()
+
+	// Only run cleanup once - if we haven't canceled yet.
+	select {
+	case <-s.ctx.Done():
+	default:
+		// This needs to be inside the select.
+		s.cancel()
+		s.sendClose()
+		// cleanup must be last since we can't sendClose if the UDPConn is cleaned up.
+		s.cleanup(s)
+	}
+
+}
+
+// readWorker is a per-session goroutine that receive messages, appends their
+// data to the session's readBuffer, and signals to Session.Read that data is
+// available.
 func (s *Session) readWorker() {
 	timeoutTimer := time.NewTimer(ReadTimeout)
 
@@ -208,8 +243,7 @@ func (s *Session) readWorker() {
 			return
 		case <-timeoutTimer.C:
 			log.Printf(`Session[%s].readWorker: no reply from peer; alerting timeout`, s.Key())
-			// This is a unbuffered channel, but we're done so it's fine to just block here.
-			s.quitCh <- s
+			s.Close()
 			return
 		case msg := <-s.receiveCh:
 			// Reset session timeout
@@ -224,9 +258,7 @@ func (s *Session) readWorker() {
 				maxAckable := int(s.maxAckable.Load())
 				if msg.Length > maxAckable {
 					log.Printf(`Session[%s].readWorker: peer ack length [%d] greater than maxAckable [%d]; closing session`, s.Key(), msg.Length, maxAckable)
-					sendClose(s.ID, s.Addr, s.conn)
 					s.Close()
-					s.quitCh <- s
 					return
 				}
 
@@ -347,7 +379,8 @@ func (s *Session) writeWorker() {
 }
 
 // sendAck sends an acknowledgement of a given session length.
-// The session's current length isn't strictly used, since we sometimes need to send something else.
+// The session's current length isn't strictly used, since we sometimes need to
+// send something else.
 // For example, we should always respond to a duplicate connect with /ack/SESSION/0/
 // (Unclear if *any* ack is fine in that case, but docs specify to send 0.)
 func (s *Session) sendAck(length int) error {
@@ -475,17 +508,10 @@ func (s *Session) listenClient() {
 		case `connect`:
 			// For now, we aren't supporting 1-1 connections, so just close.
 			log.Printf(`Session[%d].listenClient: unexpected connect from server`, s.ID)
-			sendClose(s.ID, s.Addr, s.conn)
 			s.Close()
 		case `close`:
 			log.Printf(`Session[%d].listenClient: peer disconnect; closing`, s.ID)
 			// Send a Close msg if we *haven't* already closed ourselves
-			select {
-			case <-s.ctx.Done():
-				return
-			default:
-			}
-			sendClose(s.ID, s.Addr, s.conn)
 			s.Close()
 		case `ack`, `data`:
 			// Forward ACK and DATA to session.
