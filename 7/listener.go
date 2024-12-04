@@ -7,6 +7,11 @@ import (
 	"sync"
 )
 
+// Spec: "Make sure you support at least 20 simultaneous sessions."
+// This gives some room for 20 clients to all connect at once while still
+// providing backpressure.
+const acceptBufferSize = 20
+
 type Listener struct {
 	conn *net.UDPConn
 	// acceptCh syncronizes Accept() with the listen() goroutine.
@@ -20,7 +25,6 @@ type Listener struct {
 }
 
 func Listen(laddr *net.UDPAddr) (*Listener, error) {
-	// Listen or die
 	conn, err := net.ListenUDP("udp", laddr)
 	if err != nil {
 		return nil, fmt.Errorf(`error listening on %s:%d: %s`, localAddr, localPort, err)
@@ -29,7 +33,7 @@ func Listen(laddr *net.UDPAddr) (*Listener, error) {
 
 	l := &Listener{
 		conn:     conn,
-		acceptCh: make(chan *Session, 1),
+		acceptCh: make(chan *Session, acceptBufferSize),
 		quitCh:   make(chan *Session),
 		pool:     &sync.Pool{New: func() any { return &Msg{} }},
 	}
@@ -62,11 +66,11 @@ func (l *Listener) listen() {
 		// Read a packet
 		n, addr, err := l.conn.ReadFrom(buf)
 		if err != nil {
-			log.Printf(`Listener: error reading from %s: %s`, addr.String(), err)
+			log.Printf(`Listener: error reading from [%s]: %s`, addr.String(), err)
 			continue
 		}
 		rawMsg := buf[:n]
-		log.Printf(`Listener: got %d bytes from %s: [%s]`, n, addr.String(), string(rawMsg))
+		log.Printf(`Listener: got [%d] bytes from [%s]`, n, addr.String())
 
 		// Parse a message; pull from pool since we'd otherwise be allocating a lot of these.
 		parsedMsg := l.pool.Get().(*Msg)
@@ -107,7 +111,7 @@ func (l *Listener) listen() {
 			}
 			// Regardless, nothing more to do here but send an ACK. If this fails, they can always retry the CONNECT.
 			if err = session.sendAck(0); err != nil {
-				log.Printf(`Listener: error sending ack to %s: %s`, addr, err)
+				log.Printf(`Listener: error sending ack to [%s]: %s`, addr, err)
 			}
 			continue
 		} else {
@@ -137,7 +141,7 @@ func (l *Listener) listen() {
 			case session.receiveCh <- parsedMsg:
 			default:
 				// Do nothing; just drop the packet.
-				log.Printf(`Listener: dropped packet for session %s`, session.Key())
+				log.Printf(`Listener: dropped packet for session [%s]`, session.Key())
 				l.pool.Put(parsedMsg)
 			}
 			continue
