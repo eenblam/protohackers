@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -296,6 +297,21 @@ func (s *Session) readWorker() {
 	}
 }
 
+// Receive is a non-blocking method for passing ACK or DATA messages to a Session's readWorker.
+// If the readWorker is busy and the internal receive channel is full, an error is returned.
+// Other message types will also produce an error.
+func (s *Session) Receive(msg *Msg) error {
+	if msg.Type != "ack" && msg.Type != "data" {
+		return fmt.Errorf("session will only receive ack or data messages (got [%s])", msg.Type)
+	}
+	select {
+	case s.receiveCh <- msg:
+		return nil
+	default:
+		return errors.New("receive channel full")
+	}
+}
+
 // writeWorker is a per-session goroutine that sends data from the session's writeBuffer.
 func (s *Session) writeWorker() {
 	retransmissionTicker := time.NewTicker(RetransmissionTimeout)
@@ -468,65 +484,4 @@ func sendClose(sessionID int, addr net.Addr, conn *net.UDPConn) error {
 		return fmt.Errorf("sendClose: short write sending close message for session [%d]: %d != %d", sessionID, n, len(msg))
 	}
 	return nil
-}
-
-// listenClient is the core listen loop for a client-only session, since it isn't
-// being managed by a server Listener.
-func (s *Session) listenClient() {
-	buf := make([]byte, maxMessageSize)
-	for {
-		select {
-		case <-s.ctx.Done():
-			return
-		default:
-		}
-
-		// Read a packet
-		n, err := s.conn.Read(buf)
-		if err != nil {
-			log.Printf(`Session[%s].listenClient: error reading: %v`, s.Key(), err)
-			continue
-		}
-		rawMsg := buf[:n]
-		log.Printf(`Session[%s].listenClient: got %d bytes`, s.Key(), n)
-
-		// Parse a message; pull from pool since we'd otherwise be allocating a lot of these.
-		parsedMsg, err := parseMessage(rawMsg)
-		if err != nil {
-			// Just drop invalid messages
-			log.Printf(`Session[%s].listenClient: error parsing message: [%v]`, s.Key(), err)
-			continue
-		}
-		if parsedMsg.Session != s.ID {
-			log.Printf(`Session[%s].listenClient: got [%s] for session [%d], expected [%d]`, s.Key(), parsedMsg.Type, parsedMsg.Session, s.ID)
-			s.Close()
-			return
-		}
-		log.Printf(`Session[%s].listenClient: got %d bytes of type [%s]`, s.Key(), n, parsedMsg.Type)
-
-		switch parsedMsg.Type {
-		case `connect`:
-			// For now, we aren't supporting 1-1 connections, so just close.
-			log.Printf(`Session[%d].listenClient: unexpected connect from server`, s.ID)
-			s.Close()
-		case `close`:
-			log.Printf(`Session[%d].listenClient: peer disconnect; closing`, s.ID)
-			// Send a Close msg if we *haven't* already closed ourselves
-			s.Close()
-		case `ack`, `data`:
-			// Forward ACK and DATA to session.
-			// Don't acknowledge DATA yet, since we may drop packets here.
-			select {
-			case s.receiveCh <- parsedMsg:
-			default:
-				// Do nothing; just drop the packet.
-				log.Printf(`Session[%s].listenClient: dropped packet`, s.Key())
-			}
-			continue
-
-		default:
-			log.Printf(`Session[%s].listenClient: unexpected packet type [%s]`, s.Key(), parsedMsg.Type)
-		}
-
-	}
 }

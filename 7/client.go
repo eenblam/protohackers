@@ -25,7 +25,7 @@ func DialLRCP(network string, laddr, raddr *net.UDPAddr) (*Session, error) {
 		coordinator.getClientId(conn),
 		conn,
 		coordinator.cleanup)
-	go session.listenClient()
+	go coordinator.listen(session)
 	// Send initial connect before making session available for use
 	err = session.sendConnect()
 	if err != nil {
@@ -77,4 +77,61 @@ func (c *ClientCoordinator) getClientId(conn *net.UDPConn) (i int) {
 		}
 	}
 
+}
+
+// listen is the core listen loop for a single client-only session, since it isn't
+// being managed by a server Listener.
+func (c *ClientCoordinator) listen(s *Session) {
+	buf := make([]byte, maxMessageSize)
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		default:
+		}
+
+		// Read a packet
+		n, err := s.conn.Read(buf)
+		if err != nil {
+			log.Printf(`Client[%s].listen: error reading: %v`, s.Key(), err)
+			continue
+		}
+		rawMsg := buf[:n]
+		log.Printf(`Client[%s].listen: got %d bytes`, s.Key(), n)
+
+		// Parse a message; pull from pool since we'd otherwise be allocating a lot of these.
+		parsedMsg, err := parseMessage(rawMsg)
+		if err != nil {
+			// Just drop invalid messages
+			log.Printf(`Client[%s].listen: error parsing message: [%v]`, s.Key(), err)
+			continue
+		}
+		if parsedMsg.Session != s.ID {
+			log.Printf(`Client[%s].listen: got [%s] for session [%d], expected [%d]`, s.Key(), parsedMsg.Type, parsedMsg.Session, s.ID)
+			s.Close()
+			return
+		}
+		log.Printf(`Client[%s].listen: got %d bytes of type [%s]`, s.Key(), n, parsedMsg.Type)
+
+		switch parsedMsg.Type {
+		case `connect`:
+			// For now, we aren't supporting 1-1 connections, so just close.
+			log.Printf(`Client[%s].listen: unexpected connect from server`, s.Key())
+			s.Close()
+		case `close`:
+			log.Printf(`Client[%s].listen: peer disconnect; closing`, s.Key())
+			// Send a Close msg if we *haven't* already closed ourselves
+			s.Close()
+		case `ack`, `data`:
+			// Forward ACK and DATA to session.
+			// Don't acknowledge DATA yet, since we may drop packets here.
+			err = s.Receive(parsedMsg)
+			if err != nil {
+				// Do nothing; just drop the packet.
+				log.Printf(`Client[%s].listen: dropped packet: %v`, s.Key(), err)
+			}
+		default:
+			log.Printf(`Client[%s].listen: unexpected packet type [%s]`, s.Key(), parsedMsg.Type)
+		}
+	}
 }

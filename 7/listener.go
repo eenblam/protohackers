@@ -112,7 +112,6 @@ func (l *Listener) listen() {
 		}
 		switch parsedMsg.Type {
 		case `connect`:
-			log.Printf(`Listener: unexpected handling of connect message for session [%s]; this should be unreachable`, session.Key())
 			continue
 		case `close`:
 			// Close session and remove from store.
@@ -120,17 +119,14 @@ func (l *Listener) listen() {
 			session.Close()
 			sendClose(parsedMsg.Session, addr, l.conn)
 			l.sessionStore.Delete(session.Key())
-			continue
 		case `ack`, `data`:
 			// Send ACK and DATA to session.
 			// Don't acknowledge DATA yet, since we may drop packets here.
-			select {
-			case session.receiveCh <- parsedMsg:
-			default:
+			err = session.Receive(parsedMsg)
+			if err != nil {
 				// Do nothing; just drop the packet.
-				log.Printf(`Listener: dropped packet for session [%s]`, session.Key())
+				log.Printf(`Session[%s].listenClient: dropped packet: %v`, session.Key(), err)
 			}
-			continue
 		default:
 			log.Printf(`Listener: unexpected packet type [%s] for session [%s]`, parsedMsg.Type, session.Key())
 		}
