@@ -121,6 +121,8 @@ func TestBasic(t *testing.T) {
 }
 
 func TestBadLink(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	// Goal: generate a lot of data, write it, reverse it, scan it back
 
@@ -161,6 +163,7 @@ func TestBadLink(t *testing.T) {
 		Port: 4321,
 	}
 	_, err := NewBadProxy(
+		ctx,
 		serverAddr,
 		proxyAddr,
 		25, // 25% failure rate
@@ -170,7 +173,7 @@ func TestBadLink(t *testing.T) {
 	}
 	time.Sleep(500 * time.Millisecond)
 	session, err := DialLRCP("lrcp", nil, proxyAddr)
-	// If you want to bypass the proxy...
+	// If you want to bypass the proxy entirely...
 	//session, err := DialLRCP("lrcp", nil, serverAddr)
 	if err != nil {
 		t.Fatalf(`failed to dial proxy server: %v`, err)
@@ -244,7 +247,7 @@ type BadProxy struct {
 	BufferPool sync.Pool
 }
 
-func NewBadProxy(serverAddr, listenAddr *net.UDPAddr, failRate int) (*BadProxy, error) {
+func NewBadProxy(ctx context.Context, serverAddr, listenAddr *net.UDPAddr, failRate int) (*BadProxy, error) {
 	if failRate > 99 {
 		return nil, fmt.Errorf("proxy has failure rate [%d] > 99; no traffic can pass.", failRate)
 	} else if failRate < 1 {
@@ -261,22 +264,23 @@ func NewBadProxy(serverAddr, listenAddr *net.UDPAddr, failRate int) (*BadProxy, 
 			},
 		},
 	}
-	go b.listen()
+	go b.listen(ctx)
 	return b, nil
 }
 
 // badProxy will listen on two addresses, fowarding packets between the two,
 // dropping an average of (failRate/100) packets at random.
 // Currently a dumb proxy that only supports a single client for simplicity.
-// TODO context to cancel all goroutines
-func (b *BadProxy) listen() {
+func (b *BadProxy) listen(ctx context.Context) {
+	bufSize := 65535 // Max UDP size
+
 	listenConn, err := net.ListenUDP("udp", b.ListenAddr)
 	if err != nil {
 		panic(err)
 	}
 	defer listenConn.Close()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	// Forward to server
@@ -284,7 +288,6 @@ func (b *BadProxy) listen() {
 		defer serverConn.Close()
 		defer b.Clients.Delete(clientAddr.String())
 
-		//TODO I need to signal to other goroutine if I exit
 		for {
 			select {
 			case <-ctx.Done():
@@ -307,7 +310,7 @@ func (b *BadProxy) listen() {
 	reverse := func(ctx context.Context, serverConn *net.UDPConn, clientAddr *net.UDPAddr) {
 		defer serverConn.Close()
 
-		buf := make([]byte, 65535) // Max UDP size (2**16)
+		buf := make([]byte, bufSize)
 		// Listen for packets from server
 		// Server (connected) to proxy client (not connected)
 		for {
@@ -344,8 +347,13 @@ func (b *BadProxy) listen() {
 	// Pass packet to forward goroutine
 	var buf *[]byte
 	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
 		buf = b.BufferPool.Get().(*[]byte)
-		*buf = (*buf)[:65535] //TODO move to const
+		*buf = (*buf)[0:cap(*buf)]
 		// Read a packet
 		n, clientAddr, err := listenConn.ReadFrom(*buf)
 		if err != nil {
@@ -360,7 +368,7 @@ func (b *BadProxy) listen() {
 			continue
 		}
 		// Check client map
-		ch := make(chan *[]byte, 1) //TODO could use another pool for these
+		ch := make(chan *[]byte, 1)
 		actualCh, loaded := b.Clients.LoadOrStore(clientAddr.String(), ch)
 		if !loaded { // Kick off goroutines
 			serverConn, err := net.DialUDP("udp", nil, b.ServerAddr)
